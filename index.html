@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#e87ea3">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Sistema de Gestión</title>
+<!-- Google Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- Lucide Icons -->
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<!-- Chart.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- Estilos -->
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- LOADER -->
+<div class="loader" id="loader"><div class="spinner"></div></div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)cerrarModal()">
+  <div class="modal" id="modalContent"></div>
+</div>
+
+<!-- APP -->
+<div class="app">
+  <!-- SIDEBAR -->
+  <nav class="sidebar">
+    <div class="sidebar-header">
+      <h2 id="sidebarTitle">Mi Negocio</h2>
+      <small>Sistema de Gestión</small>
+    </div>
+    <div class="sidebar-nav">
+      <div class="nav-item active" data-section="dashboard">
+        <i data-lucide="layout-dashboard"></i>Dashboard
+      </div>
+      <div class="nav-item" data-section="pos">
+        <i data-lucide="shopping-cart"></i>Punto de Venta
+      </div>
+      <div class="nav-item" data-section="facturas">
+        <i data-lucide="file-text"></i>Facturas
+      </div>
+      <div class="nav-item" data-section="inventario">
+        <i data-lucide="package"></i>Inventario
+      </div>
+      <div class="nav-item" data-section="clientes">
+        <i data-lucide="users"></i>Clientes
+      </div>
+      <div class="nav-item" data-section="gastos">
+        <i data-lucide="wallet"></i>Gastos
+      </div>
+      <div class="nav-item" data-section="reportes">
+        <i data-lucide="bar-chart-3"></i>Reportes
+      </div>
+      <div class="nav-item" data-section="config">
+        <i data-lucide="settings"></i>Configuración
+      </div>
+    </div>
+  </nav>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="header">
+      <h1 id="headerTitle">Dashboard</h1>
+      <button class="btn btn-outline btn-sm" onclick="navegarA('config')">
+        <i data-lucide="settings" style="width:16px;height:16px"></i> Config
+      </button>
+    </div>
+    <div class="content" id="contentArea">
+      <div class="section active" id="sec-dashboard"></div>
+      <div class="section" id="sec-pos"></div>
+      <div class="section" id="sec-facturas"></div>
+      <div class="section" id="sec-inventario"></div>
+      <div class="section" id="sec-clientes"></div>
+      <div class="section" id="sec-gastos"></div>
+      <div class="section" id="sec-reportes"></div>
+      <div class="section" id="sec-config"></div>
+    </div>
+  </div>
+</div>
+
+<!-- BOTTOM NAV (MOBILE) -->
+<nav class="bottom-nav">
+  <div class="bottom-nav-inner">
+    <div class="bnav-item active" data-section="dashboard">
+      <i data-lucide="layout-dashboard"></i>Inicio
+    </div>
+    <div class="bnav-item" data-section="pos">
+      <i data-lucide="shopping-cart"></i>POS
+    </div>
+    <div class="bnav-item" data-section="facturas">
+      <i data-lucide="file-text"></i>Facturas
+    </div>
+    <div class="bnav-item" data-section="inventario">
+      <i data-lucide="package"></i>Inventario
+    </div>
+    <div class="bnav-item" data-section="clientes">
+      <i data-lucide="users"></i>Clientes
+    </div>
+    <div class="bnav-item" data-section="gastos">
+      <i data-lucide="wallet"></i>Gastos
+    </div>
+    <div class="bnav-item" data-section="reportes">
+      <i data-lucide="bar-chart-3"></i>Reportes
+    </div>
+    <div class="bnav-item" data-section="config">
+      <i data-lucide="settings"></i>Config
+    </div>
+  </div>
+</nav>
+
+<!-- App Logic -->
+<script src="app.js"></script>
+</body>
+</html>
