@@ -115,16 +115,14 @@ function formatearFecha(fecha){
 }
 function hoyStr(){ return new Date().toISOString().split('T')[0]; }
 
-function calcularTotalesCarrito(items, descuento=0, aplicarITBIS=true){
+function calcularTotalesCarrito(items, descuento=0){
   const subtotal=items.reduce((s,i)=>(parseFloat(i.precio)||0)*(parseInt(i.cantidad)||0)+s,0);
-  const pct=(state.config&&parseFloat(state.config.ITBIS_Porcentaje))||18;
-  const base=subtotal-descuento;
-  const itbis=aplicarITBIS?Math.round(base*(pct/100)*100)/100:0;
-  return{subtotal,descuento,itbis,total:base+itbis};
+  const total=Math.max(0, subtotal-descuento);
+  return{subtotal,descuento,itbis:0,total};
 }
 
 function badgeEstado(estado){
-  const m={Pendiente:'badge-yellow',Pagada:'badge-green',Completada:'badge-green',Vencida:'badge-red',Cancelada:'badge-gray'};
+  const m={Pendiente:'badge-yellow',Parcial:'badge-yellow',Pagada:'badge-green',Completada:'badge-green',Vencida:'badge-red',Cancelada:'badge-gray'};
   return `<span class="badge ${m[estado]||'badge-gray'}">${estado}</span>`;
 }
 
@@ -244,7 +242,7 @@ async function subirImagen(file){
 // ═══════════════════════════════════════════════
 // NAVEGACIÓN
 // ═══════════════════════════════════════════════
-const sectionTitles={dashboard:'Dashboard',pos:'Punto de Venta',facturas:'Facturas',inventario:'Inventario',clientes:'Clientes',gastos:'Gastos',reportes:'Reportes',config:'Configuración'};
+const sectionTitles={dashboard:'Dashboard',pos:'Punto de Venta',facturas:'Facturas',inventario:'Inventario',clientes:'Clientes',deudas:'Deudas',ganancias:'Ganancias',gastos:'Gastos',reportes:'Reportes',config:'Configuración'};
 
 function navegarA(seccion){
   state.seccionActual=seccion;
@@ -291,6 +289,8 @@ async function cargarSeccion(seccion){
       case 'facturas': await renderFacturas(); break;
       case 'inventario': await renderInventario(); break;
       case 'clientes': await renderClientes(); break;
+      case 'deudas': await renderDeudas(); break;
+      case 'ganancias': await renderGanancias(); break;
       case 'gastos': await renderGastos(); break;
       case 'reportes': await renderReportes(); break;
       case 'config': await renderConfig(); break;
@@ -424,7 +424,7 @@ function actualizarCarrito(){
   const sub=state.carrito.reduce((s,i)=>s+i.precio*i.cantidad,0);
   const desc=descTipo==='pct'?Math.round(sub*(descInput/100)*100)/100:descInput;
   const t=calcularTotalesCarrito(state.carrito,desc);
-  totDiv.innerHTML=`<div class="total-row"><span>Subtotal</span><span>${formatearMoneda(t.subtotal)}</span></div><div class="total-row"><span>Descuento</span><span>-${formatearMoneda(desc)}</span></div><div class="total-row"><span>ITBIS (${(state.config&&state.config.ITBIS_Porcentaje)||18}%)</span><span>${formatearMoneda(t.itbis)}</span></div><div class="total-row grand"><span>TOTAL</span><span>${formatearMoneda(t.total)}</span></div>`;
+  totDiv.innerHTML=`<div class="total-row"><span>Subtotal</span><span>${formatearMoneda(t.subtotal)}</span></div>${desc>0?`<div class="total-row"><span>Descuento</span><span>-${formatearMoneda(desc)}</span></div>`:''}<div class="total-row grand"><span>TOTAL</span><span>${formatearMoneda(t.total)}</span></div>`;
   calcularCambio(); refreshIcons();
 }
 function cambiarQty(i,delta){const item=state.carrito[i];const nq=item.cantidad+delta;if(nq<1)return;if(nq>item.maxStock){mostrarToast('Stock insuficiente','warning');return;}item.cantidad=nq;actualizarCarrito();}
@@ -459,7 +459,7 @@ async function registrarVentaPOS(){
     };
     mostrarToast('Venta registrada');
     mostrarModal(`<h2><i data-lucide="check-circle" style="width:22px;height:22px;color:var(--green)"></i> Venta Registrada</h2>
-      <div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Cliente</span><span style="color:var(--text-primary);font-weight:600">${r.clienteNombre}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Método</span><span style="color:var(--text-primary);font-weight:600">${r.metodoPago}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Subtotal</span><span>${formatearMoneda(r.subtotal)}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Descuento</span><span>-${formatearMoneda(r.descuento)}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>ITBIS</span><span>${formatearMoneda(r.itbis)}</span></div><div style="display:flex;justify-content:space-between;padding:12px 0;font-size:1.4rem;font-weight:800;color:var(--green);border-top:3px solid var(--green-dim);margin-top:6px"><span>TOTAL</span><span>${formatearMoneda(r.total)}</span></div></div>
+      <div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Cliente</span><span style="color:var(--text-primary);font-weight:600">${r.clienteNombre}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Método</span><span style="color:var(--text-primary);font-weight:600">${r.metodoPago}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Subtotal</span><span>${formatearMoneda(r.subtotal)}</span></div>${r.descuento>0?`<div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Descuento</span><span>-${formatearMoneda(r.descuento)}</span></div>`:''}<div style="display:flex;justify-content:space-between;padding:12px 0;font-size:1.4rem;font-weight:800;color:var(--green);border-top:3px solid var(--green-dim);margin-top:6px"><span>TOTAL</span><span>${formatearMoneda(r.total)}</span></div></div>
       <div style="display:flex;flex-direction:column;gap:8px"><button class="btn btn-primary btn-block" onclick="generarFacturaDesdeVenta()"><i data-lucide="file-text" style="width:18px;height:18px"></i> Generar Factura</button><button class="btn btn-outline btn-block" onclick="cerrarModal()">Solo Registrar</button></div>`);
     refreshIcons();
   }catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}
@@ -479,15 +479,27 @@ async function generarFacturaDesdeVenta(){
 // ═══════════════════════════════════════════════
 async function renderFacturas(){
   await cargarDatos('facturas','getFacturas');
+  await cargarDatos('deudasFacturas','getDeudasFacturas'); // para saber saldo pendiente por factura
   const sec=document.getElementById('sec-facturas');
-  sec.innerHTML=`<div class="table-wrap"><div class="table-header"><h3><i data-lucide="file-text" style="width:20px;height:20px;color:var(--pink)"></i> Facturas</h3><div class="table-actions"><select id="filtroEstadoFac" onchange="filtrarFacturas()"><option>Todas</option><option>Pendiente</option><option>Pagada</option><option>Vencida</option><option>Cancelada</option></select><button class="btn btn-primary btn-sm" onclick="abrirModalFactura()"><i data-lucide="plus" style="width:16px;height:16px"></i> Nueva</button></div></div><div style="overflow-x:auto"><table><thead><tr><th>N° Factura</th><th>Fecha</th><th>Cliente</th><th>Total</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="facturasBody"></tbody></table></div></div>`;
+  sec.innerHTML=`<div class="table-wrap"><div class="table-header"><h3><i data-lucide="file-text" style="width:20px;height:20px;color:var(--pink)"></i> Facturas</h3><div class="table-actions"><select id="filtroEstadoFac" onchange="filtrarFacturas()"><option>Todas</option><option>Pendiente</option><option>Parcial</option><option>Pagada</option><option>Vencida</option><option>Cancelada</option></select><button class="btn btn-primary btn-sm" onclick="abrirModalFactura()"><i data-lucide="plus" style="width:16px;height:16px"></i> Nueva</button></div></div><div style="overflow-x:auto"><table><thead><tr><th>N° Factura</th><th>Fecha</th><th>Cliente</th><th>Total</th><th>Saldo</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="facturasBody"></tbody></table></div></div>`;
   filtrarFacturas();refreshIcons();
+}
+function getSaldoFactura(id){
+  const deudasFac=state.deudasFacturas||[];
+  const d=deudasFac.find(x=>String(x.ID)===String(id));
+  return d?parseFloat(d.SaldoPendiente)||0:0;
 }
 function filtrarFacturas(){
   const est=document.getElementById('filtroEstadoFac')?.value||'Todas';
   const facts=(state.facturas||[]).filter(f=>est==='Todas'||f.Estado===est);
   const tb=document.getElementById('facturasBody');if(!tb)return;
-  tb.innerHTML=facts.length?facts.map(f=>`<tr><td><strong style="color:var(--pink)">${f.NumeroFactura}</strong></td><td>${formatearFecha(f.Fecha)}</td><td>${f.ClienteNombre}</td><td><strong>${formatearMoneda(f.Total)}</strong></td><td>${badgeEstado(f.Estado)}</td><td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="verFactura('${f.ID}')"><i data-lucide="eye" style="width:14px;height:14px"></i></button> ${f.Estado==='Pendiente'?`<button class="btn btn-success btn-sm" onclick="marcarFacturaPagada('${f.ID}')"><i data-lucide="check" style="width:14px;height:14px"></i></button>`:''}</td></tr>`).join(''):'<tr><td colspan="6"><div class="empty-state"><p>No hay facturas</p></div></td></tr>';
+  tb.innerHTML=facts.length?facts.map(f=>{
+    const saldo=getSaldoFactura(f.ID);
+    const saldoCell = saldo>0
+      ? `<strong style="color:var(--red)">${formatearMoneda(saldo)}</strong>`
+      : `<span style="color:var(--green);font-weight:700">✓</span>`;
+    return `<tr><td><strong style="color:var(--pink)">${f.NumeroFactura}</strong></td><td>${formatearFecha(f.Fecha)}</td><td>${f.ClienteNombre}</td><td><strong>${formatearMoneda(f.Total)}</strong></td><td>${saldoCell}</td><td>${badgeEstado(f.Estado)}</td><td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="verFactura('${f.ID}')" title="Ver"><i data-lucide="eye" style="width:14px;height:14px"></i></button> ${saldo>0?`<button class="btn btn-success btn-sm" onclick="abrirModalAbono('${f.ID}')" title="Abonar"><i data-lucide="banknote" style="width:14px;height:14px"></i></button>`:''}</td></tr>`;
+  }).join(''):'<tr><td colspan="7"><div class="empty-state"><p>No hay facturas</p></div></td></tr>';
   refreshIcons();
 }
 async function abrirModalFactura(fId,prefill){
@@ -526,7 +538,7 @@ function renderFacItems(){
   }).join('');calcFacTotales();refreshIcons();
 }
 function facItemProdChange(i,sel){const o=sel.options[sel.selectedIndex];if(o.value){window._facItems[i].productoId=o.value;window._facItems[i].precio=parseFloat(o.dataset.precio)||0;window._facItems[i].descripcion=o.textContent.split(' — ')[0];}else window._facItems[i].productoId='';renderFacItems();}
-function calcFacTotales(){const sub=window._facItems.reduce((s,i)=>s+i.precio*i.cantidad,0);const pct=(state.config&&parseFloat(state.config.ITBIS_Porcentaje))||18;const itbis=Math.round(sub*(pct/100)*100)/100;const div=document.getElementById('facTotales');if(div)div.innerHTML=`<div style="display:flex;justify-content:space-between;padding:4px 0;color:var(--text-secondary)"><span>Subtotal</span><span>${formatearMoneda(sub)}</span></div><div style="display:flex;justify-content:space-between;padding:4px 0;color:var(--text-secondary)"><span>ITBIS (${pct}%)</span><span>${formatearMoneda(itbis)}</span></div><div style="display:flex;justify-content:space-between;padding:10px 0;font-size:1.3rem;font-weight:800;color:var(--green);border-top:3px solid var(--green-dim);margin-top:4px"><span>TOTAL</span><span>${formatearMoneda(sub+itbis)}</span></div>`;}
+function calcFacTotales(){const sub=window._facItems.reduce((s,i)=>s+i.precio*i.cantidad,0);const div=document.getElementById('facTotales');if(div)div.innerHTML=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:1.3rem;font-weight:800;color:var(--green);border-top:3px solid var(--green-dim);margin-top:4px"><span>TOTAL</span><span>${formatearMoneda(sub)}</span></div>`;}
 async function guardarFactura(preview){
   const sel=document.getElementById('facCliente'),opt=sel.options[sel.selectedIndex];const items=window._facItems.filter(i=>i.descripcion||i.productoId);
   if(!items.length){mostrarToast('Agrega al menos un item','warning');return;}
@@ -537,25 +549,412 @@ function verFacturaData(r){const f={NumeroFactura:r.numeroFactura,Fecha:r.fecha,
 
 function renderFacturaPreview(fac,detalles){
   const cfg=state.config||{};
+  // Construir datos de cliente solo con campos no vacíos
+  const cliLineas=[];
+  if(fac.ClienteNombre) cliLineas.push(`<div>${fac.ClienteNombre}</div>`);
+  if(fac.ClienteTelefono) cliLineas.push(`<div>Tel: ${fac.ClienteTelefono}</div>`);
+  if(fac.ClienteEmail) cliLineas.push(`<div>${fac.ClienteEmail}</div>`);
+  const facInfoBlock = cliLineas.length
+    ? `<div class="fac-info"><div><strong>Facturado a:</strong>${cliLineas.join('')}</div></div>`
+    : '';
+
+  // Datos del negocio — solo los que tienen contenido
+  const negocioLineas=[];
+  if(cfg.Logo) negocioLineas.push(`<img src="${cfg.Logo}" style="max-height:60px;margin-bottom:10px" alt="Logo">`);
+  negocioLineas.push(`<h1>${cfg.NombreNegocio||'Mi Negocio'}</h1>`);
+  if(cfg.RNC) negocioLineas.push(`<div style="color:var(--text-muted);font-size:.86rem">RNC: ${cfg.RNC}</div>`);
+  if(cfg.Direccion) negocioLineas.push(`<div style="color:var(--text-muted);font-size:.86rem">${cfg.Direccion}</div>`);
+  if(cfg.Telefono) negocioLineas.push(`<div style="color:var(--text-muted);font-size:.86rem">Tel: ${cfg.Telefono}</div>`);
+  if(cfg.Email) negocioLineas.push(`<div style="color:var(--text-muted);font-size:.86rem">${cfg.Email}</div>`);
+
+  // Totales — solo filas con datos
+  const descMayor = parseFloat(fac.Descuento)>0;
+  const totalesBlock = `<div class="fac-totals">
+    ${descMayor?`<div class="row">Subtotal: ${formatearMoneda(fac.Subtotal)}</div><div class="row">Descuento: -${formatearMoneda(fac.Descuento)}</div>`:''}
+    <div class="row grand">TOTAL: ${formatearMoneda(fac.Total)}</div>
+  </div>`;
+
+  // Footer — solo si hay notas o datos del negocio
+  const footerTextos=[];
+  if(fac.Notas) footerTextos.push(`<p>${fac.Notas}</p>`);
+  footerTextos.push(`<p>Gracias por su preferencia</p>`);
+  const pieNegocio=[cfg.NombreNegocio, cfg.Telefono].filter(Boolean).join(' | ');
+  if(pieNegocio) footerTextos.push(`<p>${pieNegocio}</p>`);
+  const footerBlock = footerTextos.length ? `<div class="fac-footer">${footerTextos.join('')}</div>` : '';
+
   document.getElementById('sec-facturas').innerHTML=`
     <div class="no-print" style="margin-bottom:20px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn btn-outline" onclick="renderFacturas()"><i data-lucide="arrow-left" style="width:16px;height:16px"></i> Volver</button>
       <button class="btn btn-warm" onclick="enviarFacturaWhatsApp()"><i data-lucide="message-circle" style="width:16px;height:16px"></i> WhatsApp</button>
       <button class="btn btn-outline" onclick="copiarMensajeFactura()"><i data-lucide="copy" style="width:16px;height:16px"></i> Copiar</button>
       <button class="btn btn-outline" onclick="window.print()"><i data-lucide="printer" style="width:16px;height:16px"></i> Imprimir</button>
-      ${fac.Estado==='Pendiente'?`<button class="btn btn-success" onclick="marcarFacturaPagada('${fac.ID}')"><i data-lucide="check-circle" style="width:16px;height:16px"></i> Pagada</button>`:''}
+      ${fac.Estado!=='Pagada'&&fac.Estado!=='Cancelada'&&fac.ID?`<button class="btn btn-success" onclick="abrirModalAbono('${fac.ID}')"><i data-lucide="banknote" style="width:16px;height:16px"></i> Abonar</button>`:''}
     </div>
-    <div class="factura-preview"><div class="fac-header"><div>${cfg.Logo?`<img src="${cfg.Logo}" style="max-height:60px;margin-bottom:10px" alt="Logo">`:''}<h1>${cfg.NombreNegocio||'Mi Negocio'}</h1>${cfg.RNC?`<div style="color:var(--text-muted);font-size:.86rem">RNC: ${cfg.RNC}</div>`:''}${cfg.Direccion?`<div style="color:var(--text-muted);font-size:.86rem">${cfg.Direccion}</div>`:''}${cfg.Telefono?`<div style="color:var(--text-muted);font-size:.86rem">Tel: ${cfg.Telefono}</div>`:''}</div><div style="text-align:right"><div class="fac-num">${fac.NumeroFactura}</div><div style="color:var(--text-secondary);margin-top:6px;font-size:.88rem">Fecha: ${formatearFecha(fac.Fecha)}</div><div style="color:var(--text-secondary);font-size:.88rem">Vence: ${formatearFecha(fac.FechaVencimiento)}</div><div style="margin-top:8px">${badgeEstado(fac.Estado)}</div></div></div>
-    <div class="fac-info"><div><strong>Facturado a:</strong><br>${fac.ClienteNombre||'—'}<br>${fac.ClienteTelefono?'Tel: '+fac.ClienteTelefono+'<br>':''}${fac.ClienteEmail||''}</div></div>
-    <table><thead><tr><th>Descripción</th><th style="text-align:center">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Total</th></tr></thead><tbody>${detalles.map(d=>`<tr><td>${d.Descripcion||''}</td><td style="text-align:center">${d.Cantidad}</td><td style="text-align:right">${formatearMoneda(d.PrecioUnitario)}</td><td style="text-align:right">${formatearMoneda(d.Subtotal)}</td></tr>`).join('')}</tbody></table>
-    <div class="fac-totals"><div class="row">Subtotal: ${formatearMoneda(fac.Subtotal)}</div>${fac.Descuento?`<div class="row">Descuento: -${formatearMoneda(fac.Descuento)}</div>`:''}<div class="row">ITBIS (${cfg.ITBIS_Porcentaje||18}%): ${formatearMoneda(fac.ITBIS)}</div><div class="row grand">TOTAL: ${formatearMoneda(fac.Total)}</div></div>
-    <div class="fac-footer">${fac.Notas?`<p>${fac.Notas}</p>`:''}<p>Gracias por su preferencia</p><p>${cfg.NombreNegocio||''} | ${cfg.Telefono||''}</p></div></div>`;
+    <div class="factura-preview">
+      <div class="fac-header">
+        <div>${negocioLineas.join('')}</div>
+        <div style="text-align:right"><div class="fac-num">${fac.NumeroFactura}</div><div style="color:var(--text-secondary);margin-top:6px;font-size:.88rem">Fecha: ${formatearFecha(fac.Fecha)}</div>${fac.FechaVencimiento?`<div style="color:var(--text-secondary);font-size:.88rem">Vence: ${formatearFecha(fac.FechaVencimiento)}</div>`:''}<div style="margin-top:8px">${badgeEstado(fac.Estado)}</div></div>
+      </div>
+      ${facInfoBlock}
+      <table><thead><tr><th>Descripción</th><th style="text-align:center">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Total</th></tr></thead><tbody>${detalles.map(d=>`<tr><td>${d.Descripcion||''}</td><td style="text-align:center">${d.Cantidad}</td><td style="text-align:right">${formatearMoneda(d.PrecioUnitario)}</td><td style="text-align:right">${formatearMoneda(d.Subtotal)}</td></tr>`).join('')}</tbody></table>
+      ${totalesBlock}
+      ${footerBlock}
+    </div>`;
   window._currentFactura=fac;window._currentFacturaDetalles=detalles;refreshIcons();
 }
-function buildMensajeFactura(){const f=window._currentFactura,d=window._currentFacturaDetalles,cfg=state.config||{};if(!f)return'';return`Estimado/a ${f.ClienteNombre},\n\nLe adjuntamos su factura:\n\n📋 *Factura N°:* ${f.NumeroFactura}\n📅 *Fecha:* ${formatearFecha(f.Fecha)}\n⏰ *Vencimiento:* ${formatearFecha(f.FechaVencimiento)}\n\n📦 *Detalle:*\n${d.map(i=>`• ${i.Descripcion||i.descripcion} x ${i.Cantidad||i.cantidad} = ${formatearMoneda((i.PrecioUnitario||i.precioUnitario)*(i.Cantidad||i.cantidad))}`).join('\n')}\n\n💰 *Subtotal:* ${formatearMoneda(f.Subtotal)}\n💰 *ITBIS (${cfg.ITBIS_Porcentaje||18}%):* ${formatearMoneda(f.ITBIS)}\n✅ *TOTAL:* ${formatearMoneda(f.Total)}\n\n_${cfg.NombreNegocio||'Mi Negocio'} | ${cfg.Telefono||''}_`;}
+function buildMensajeFactura(){
+  const f=window._currentFactura,d=window._currentFacturaDetalles,cfg=state.config||{};
+  if(!f) return '';
+  const lineas=[];
+  lineas.push(`Estimado/a ${f.ClienteNombre||'cliente'},`);
+  lineas.push(`\nLe adjuntamos su factura:\n`);
+  lineas.push(`📋 *Factura N°:* ${f.NumeroFactura}`);
+  lineas.push(`📅 *Fecha:* ${formatearFecha(f.Fecha)}`);
+  if(f.FechaVencimiento) lineas.push(`⏰ *Vencimiento:* ${formatearFecha(f.FechaVencimiento)}`);
+  lineas.push(`\n📦 *Detalle:*`);
+  d.forEach(i=>{
+    const cant=i.Cantidad||i.cantidad;
+    const pu=i.PrecioUnitario||i.precioUnitario;
+    lineas.push(`• ${i.Descripcion||i.descripcion} x ${cant} = ${formatearMoneda(pu*cant)}`);
+  });
+  lineas.push('');
+  if(parseFloat(f.Descuento)>0){
+    lineas.push(`💰 *Subtotal:* ${formatearMoneda(f.Subtotal)}`);
+    lineas.push(`➖ *Descuento:* -${formatearMoneda(f.Descuento)}`);
+  }
+  lineas.push(`✅ *TOTAL:* ${formatearMoneda(f.Total)}`);
+  const pie=[cfg.NombreNegocio, cfg.Telefono].filter(Boolean).join(' | ');
+  if(pie) lineas.push(`\n_${pie}_`);
+  return lineas.join('\n');
+}
 function enviarFacturaWhatsApp(){const f=window._currentFactura;if(!f)return;let t=String(f.ClienteTelefono||'').replace(/\D/g,'');if(t.length===10)t='1'+t;if(!t){mostrarToast('Sin teléfono','warning');return;}window.open('https://wa.me/'+t+'?text='+encodeURIComponent(buildMensajeFactura()),'_blank');}
 function copiarMensajeFactura(){navigator.clipboard.writeText(buildMensajeFactura()).then(()=>mostrarToast('Copiado')).catch(()=>mostrarToast('Error','error'));}
-async function marcarFacturaPagada(id){try{mostrarBusy('Actualizando factura...');await apiPost('actualizarEstadoFactura',{id,estado:'Pagada'});invalidarCache('facturas','dashboard');state.facturas=null;mostrarToast('Factura pagada');renderFacturas();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
+async function marcarFacturaPagada(id){try{mostrarBusy('Actualizando factura...');await apiPost('actualizarEstadoFactura',{id,estado:'Pagada'});invalidarCache('facturas','deudasFacturas','dashboard');state.facturas=null;state.deudasFacturas=null;mostrarToast('Factura pagada');renderFacturas();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
+
+// ═══════════════════════════════════════════════
+// ABONOS POR FACTURA (pagos parciales o totales)
+// ═══════════════════════════════════════════════
+async function abrirModalAbono(facturaId){
+  await cargarDatos('facturas','getFacturas');
+  await cargarDatos('deudasFacturas','getDeudasFacturas');
+  const f=(state.facturas||[]).find(x=>String(x.ID)===String(facturaId));
+  if(!f){ mostrarToast('Factura no encontrada','error'); return; }
+  const saldo=getSaldoFactura(facturaId);
+  if(saldo<=0){ mostrarToast('Esta factura ya está pagada','info'); return; }
+  // Cargar historial de abonos para esta factura
+  let abonosHist=[];
+  try{ abonosHist=await apiGet('getAbonosFactura',{facturaId}); }catch(e){ abonosHist=[]; }
+  const histBlock = abonosHist.length
+    ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <h3 style="font-size:.82rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">Abonos previos</h3>
+        ${abonosHist.map(a=>`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:.86rem"><span style="color:var(--text-secondary)">${formatearFecha(a.Fecha)} · ${a.MetodoPago||'—'}</span><span style="font-weight:700;color:var(--green)">${formatearMoneda(a.Monto)}</span></div>`).join('')}
+      </div>`
+    : '';
+  mostrarModal(`
+    <h2><i data-lucide="banknote" style="width:20px;height:20px;color:var(--green)"></i> Abonar a Factura</h2>
+    <div style="background:var(--pink-dim);padding:12px 14px;border-radius:10px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;font-size:.84rem;color:var(--text-secondary)"><span>Factura</span><span style="font-weight:700;color:var(--pink)">${f.NumeroFactura}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:.84rem;color:var(--text-secondary);margin-top:4px"><span>Cliente</span><span style="color:var(--text-primary);font-weight:600">${f.ClienteNombre||'—'}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:.84rem;color:var(--text-secondary);margin-top:4px"><span>Total</span><span>${formatearMoneda(f.Total)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:1rem;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)"><span style="font-weight:700">Saldo pendiente</span><span style="font-weight:800;color:var(--red)">${formatearMoneda(saldo)}</span></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Monto a abonar</label><input type="number" id="abonoMonto" value="${saldo.toFixed(2)}" min="0.01" max="${saldo}" step="0.01"></div>
+      <div class="form-group"><label>Método</label><select id="abonoMetodo"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option><option>Depósito</option></select></div>
+    </div>
+    <div class="form-group"><label>Fecha</label><input type="date" id="abonoFecha" value="${hoyStr()}"></div>
+    <div class="form-group"><label>Notas (opcional)</label><input id="abonoNotas" placeholder="Referencia, comentario..."></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      <button class="btn btn-outline btn-sm" type="button" onclick="document.getElementById('abonoMonto').value='${(saldo/2).toFixed(2)}'">½ saldo</button>
+      <button class="btn btn-outline btn-sm" type="button" onclick="document.getElementById('abonoMonto').value='${saldo.toFixed(2)}'">Saldo total</button>
+    </div>
+    <button class="btn btn-primary btn-block" style="margin-top:16px" onclick="ejecutarAbono('${facturaId}')"><i data-lucide="check" style="width:16px;height:16px"></i> Registrar abono</button>
+    ${histBlock}
+  `);
+  refreshIcons();
+}
+
+async function ejecutarAbono(facturaId){
+  const monto=parseFloat(document.getElementById('abonoMonto').value)||0;
+  const metodoPago=document.getElementById('abonoMetodo').value||'Efectivo';
+  const fecha=document.getElementById('abonoFecha').value||hoyStr();
+  const notas=document.getElementById('abonoNotas').value||'';
+  if(monto<=0){ mostrarToast('Monto inválido','warning'); return; }
+  try{
+    mostrarBusy('Registrando abono...');
+    const r=await apiPost('registrarAbonoFactura',{facturaId,monto,metodoPago,fecha,notas});
+    invalidarCache('facturas','deudasFacturas','deudas','dashboard');
+    state.facturas=null; state.deudasFacturas=null; state.deudas=null;
+    cerrarModal();
+    mostrarToast(r.saldoPendiente<=0?'Factura pagada completamente':'Abono registrado');
+    // Refrescar la sección actual
+    const sec=state.seccionActual||'facturas';
+    if(sec==='deudas') renderDeudas();
+    else if(sec==='clientes') renderClientes();
+    else renderFacturas();
+  }catch(e){ mostrarToast(e.message,'error'); }
+  finally{ ocultarBusy(); }
+}
+
+// ═══════════════════════════════════════════════
+// DEUDAS — vista global de facturas con saldo pendiente
+// ═══════════════════════════════════════════════
+async function renderDeudas(){
+  await cargarDatos('deudasFacturas','getDeudasFacturas');
+  await cargarDatos('clientes','getClientes');
+  const sec=document.getElementById('sec-deudas');
+  const deudas=state.deudasFacturas||[];
+  const totalDeuda=deudas.reduce((s,d)=>s+(parseFloat(d.SaldoPendiente)||0),0);
+  const totalVencido=deudas.filter(d=>d.Vencida).reduce((s,d)=>s+(parseFloat(d.SaldoPendiente)||0),0);
+  const clientesConDeuda=[...new Set(deudas.map(d=>d.ClienteID||d.ClienteNombre))].length;
+  const facturasVencidas=deudas.filter(d=>d.Vencida).length;
+
+  // Agrupar por cliente
+  const porCliente={};
+  deudas.forEach(d=>{
+    const k=d.ClienteID||d.ClienteNombre||'sin-cliente';
+    if(!porCliente[k]) porCliente[k]={id:d.ClienteID,nombre:d.ClienteNombre,telefono:d.ClienteTelefono,facturas:[],total:0};
+    porCliente[k].facturas.push(d);
+    porCliente[k].total+=parseFloat(d.SaldoPendiente)||0;
+  });
+  const gruposCliente=Object.values(porCliente).sort((a,b)=>b.total-a.total);
+
+  sec.innerHTML=`
+    <div class="cards">
+      <div class="card"><div class="card-icon red"><i data-lucide="landmark"></i></div><div class="card-label">Por cobrar</div><div class="card-value text-red">${formatearMoneda(totalDeuda)}</div></div>
+      <div class="card"><div class="card-icon yellow"><i data-lucide="alert-circle"></i></div><div class="card-label">Vencido</div><div class="card-value text-yellow">${formatearMoneda(totalVencido)}</div></div>
+      <div class="card"><div class="card-icon pink"><i data-lucide="users"></i></div><div class="card-label">Clientes con deuda</div><div class="card-value text-pink">${clientesConDeuda}</div></div>
+      <div class="card"><div class="card-icon brown"><i data-lucide="file-clock"></i></div><div class="card-label">Facturas vencidas</div><div class="card-value text-brown">${facturasVencidas}</div></div>
+    </div>
+    <div class="table-wrap">
+      <div class="table-header">
+        <h3><i data-lucide="landmark" style="width:20px;height:20px;color:var(--pink)"></i> Facturas con saldo pendiente</h3>
+        <div class="table-actions">
+          <select id="deudasView" onchange="renderDeudasBody()">
+            <option value="facturas">Por factura</option>
+            <option value="clientes">Por cliente</option>
+          </select>
+          <select id="deudasFiltro" onchange="renderDeudasBody()">
+            <option value="todas">Todas</option>
+            <option value="vencidas">Solo vencidas</option>
+          </select>
+        </div>
+      </div>
+      <div id="deudasBody"></div>
+    </div>
+  `;
+  renderDeudasBody();
+  refreshIcons();
+}
+
+function renderDeudasBody(){
+  const view=document.getElementById('deudasView')?.value||'facturas';
+  const filtro=document.getElementById('deudasFiltro')?.value||'todas';
+  let deudas=state.deudasFacturas||[];
+  if(filtro==='vencidas') deudas=deudas.filter(d=>d.Vencida);
+  const cont=document.getElementById('deudasBody');
+  if(!cont) return;
+  if(!deudas.length){
+    cont.innerHTML='<div class="empty-state" style="padding:40px"><p style="color:var(--green);font-weight:600"><i data-lucide="check-circle" style="width:20px;height:20px;vertical-align:middle"></i> No hay deudas pendientes</p></div>';
+    refreshIcons();
+    return;
+  }
+
+  if(view==='clientes'){
+    const porCliente={};
+    deudas.forEach(d=>{
+      const k=d.ClienteID||d.ClienteNombre||'sin-cliente';
+      if(!porCliente[k]) porCliente[k]={nombre:d.ClienteNombre,telefono:d.ClienteTelefono,facturas:[],total:0};
+      porCliente[k].facturas.push(d);
+      porCliente[k].total+=parseFloat(d.SaldoPendiente)||0;
+    });
+    const grupos=Object.values(porCliente).sort((a,b)=>b.total-a.total);
+    cont.innerHTML=grupos.map(g=>`
+      <div style="border-bottom:1px solid var(--border);padding:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+          <div>
+            <strong style="font-size:1rem">${g.nombre||'—'}</strong>
+            <div style="color:var(--text-muted);font-size:.82rem">${g.facturas.length} factura${g.facturas.length===1?'':'s'} · ${g.telefono||'sin teléfono'}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="color:var(--text-muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.6px">Total deuda</div>
+            <div style="font-size:1.2rem;font-weight:800;color:var(--red)">${formatearMoneda(g.total)}</div>
+          </div>
+        </div>
+        <div style="margin-left:8px">
+          ${g.facturas.map(d=>`
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px dashed var(--border);flex-wrap:wrap">
+              <div>
+                <strong style="color:var(--pink)">${d.NumeroFactura}</strong>
+                <span style="color:var(--text-muted);font-size:.8rem;margin-left:8px">${formatearFecha(d.Fecha)}</span>
+                ${d.Vencida?`<span class="badge badge-red" style="margin-left:6px">Vencida ${d.DiasVencido}d</span>`:''}
+              </div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <strong style="color:var(--red)">${formatearMoneda(d.SaldoPendiente)}</strong>
+                <button class="btn btn-success btn-sm" onclick="abrirModalAbono('${d.ID}')"><i data-lucide="banknote" style="width:14px;height:14px"></i> Abonar</button>
+                <button class="btn btn-outline btn-sm" onclick="verFactura('${d.ID}')"><i data-lucide="eye" style="width:14px;height:14px"></i></button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
+  } else {
+    cont.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>N°</th><th>Cliente</th><th>Fecha</th><th>Vence</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Acciones</th></tr></thead><tbody>${deudas.map(d=>`
+      <tr>
+        <td><strong style="color:var(--pink)">${d.NumeroFactura}</strong></td>
+        <td>${d.ClienteNombre||'—'}</td>
+        <td>${formatearFecha(d.Fecha)}</td>
+        <td>${d.FechaVencimiento?formatearFecha(d.FechaVencimiento):'—'} ${d.Vencida?`<span class="badge badge-red">${d.DiasVencido}d</span>`:''}</td>
+        <td>${formatearMoneda(d.Total)}</td>
+        <td style="color:var(--green)">${formatearMoneda(d.MontoPagado)}</td>
+        <td><strong style="color:var(--red)">${formatearMoneda(d.SaldoPendiente)}</strong></td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-success btn-sm" onclick="abrirModalAbono('${d.ID}')" title="Abonar"><i data-lucide="banknote" style="width:14px;height:14px"></i></button>
+          <button class="btn btn-outline btn-sm" onclick="verFactura('${d.ID}')" title="Ver"><i data-lucide="eye" style="width:14px;height:14px"></i></button>
+          ${d.ClienteTelefono?`<button class="btn btn-outline btn-sm" onclick="abrirWhatsApp('${d.ClienteTelefono}')" title="WhatsApp"><i data-lucide="message-circle" style="width:14px;height:14px"></i></button>`:''}
+        </td>
+      </tr>
+    `).join('')}</tbody></table></div>`;
+  }
+  refreshIcons();
+}
+
+// ═══════════════════════════════════════════════
+// GANANCIAS — rentabilidad por período
+// ═══════════════════════════════════════════════
+async function renderGanancias(){
+  const sec=document.getElementById('sec-ganancias');
+  const hoy=new Date();
+  const inicioMes=hoy.getFullYear()+'-'+String(hoy.getMonth()+1).padStart(2,'0')+'-01';
+  const finMes=hoyStr();
+  if(!window._ganPeriodo) window._ganPeriodo={tipo:'mes',inicio:inicioMes,fin:finMes};
+
+  sec.innerHTML=`
+    <div class="filter-bar">
+      <strong>Período:</strong>
+      <button class="btn btn-sm tab ${window._ganPeriodo.tipo==='hoy'?'active':''}" onclick="setGananciasPeriodo('hoy')">Hoy</button>
+      <button class="btn btn-sm tab ${window._ganPeriodo.tipo==='semana'?'active':''}" onclick="setGananciasPeriodo('semana')">Semana</button>
+      <button class="btn btn-sm tab ${window._ganPeriodo.tipo==='mes'?'active':''}" onclick="setGananciasPeriodo('mes')">Mes</button>
+      <button class="btn btn-sm tab ${window._ganPeriodo.tipo==='anio'?'active':''}" onclick="setGananciasPeriodo('anio')">Año</button>
+      <button class="btn btn-sm tab ${window._ganPeriodo.tipo==='todo'?'active':''}" onclick="setGananciasPeriodo('todo')">Todo</button>
+      <input type="date" id="ganFechaInicio" value="${window._ganPeriodo.inicio||''}" onchange="setGananciasPeriodo('custom')">
+      <input type="date" id="ganFechaFin" value="${window._ganPeriodo.fin||''}" onchange="setGananciasPeriodo('custom')">
+    </div>
+    <div id="ganContent"><div class="empty-state"><p>Calculando...</p></div></div>
+  `;
+  refreshIcons();
+  await cargarGananciasData();
+}
+
+function setGananciasPeriodo(tipo){
+  const h=new Date();
+  let ini='', fin=hoyStr();
+  switch(tipo){
+    case 'hoy': ini=hoyStr(); break;
+    case 'semana': {
+      const dow=h.getDay();
+      const l=new Date(h); l.setDate(h.getDate()-((dow+6)%7));
+      ini=l.toISOString().split('T')[0]; break;
+    }
+    case 'mes': ini=h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-01'; break;
+    case 'anio': ini=h.getFullYear()+'-01-01'; break;
+    case 'todo': ini=''; fin=''; break;
+    case 'custom':
+      ini=document.getElementById('ganFechaInicio')?.value||'';
+      fin=document.getElementById('ganFechaFin')?.value||'';
+      break;
+  }
+  window._ganPeriodo={tipo,inicio:ini,fin};
+  // Resaltar tab activo
+  document.querySelectorAll('#sec-ganancias .filter-bar .tab').forEach(t=>t.classList.remove('active'));
+  const active=document.querySelector(`#sec-ganancias .filter-bar .tab[onclick*="'${tipo}'"]`);
+  if(active) active.classList.add('active');
+  cargarGananciasData();
+}
+
+async function cargarGananciasData(){
+  const cont=document.getElementById('ganContent');
+  if(!cont) return;
+  cont.innerHTML='<div class="empty-state"><p>Calculando...</p></div>';
+  try{
+    const p=window._ganPeriodo||{};
+    const params={};
+    if(p.inicio) params.fechaInicio=p.inicio;
+    if(p.fin) params.fechaFin=p.fin;
+    const g=await apiGet('getGanancias',params);
+    renderGananciasContent(g);
+  }catch(e){
+    cont.innerHTML=`<div class="alert-box warning"><p>Error: ${e.message}</p></div>`;
+  }
+}
+
+function renderGananciasContent(g){
+  const cont=document.getElementById('ganContent');
+  if(!cont) return;
+  const margenCol = g.gananciaNeta>=0 ? 'green' : 'red';
+  cont.innerHTML=`
+    <div class="cards">
+      <div class="card"><div class="card-icon blue"><i data-lucide="dollar-sign"></i></div><div class="card-label">Ingresos</div><div class="card-value text-blue">${formatearMoneda(g.ingresos)}</div><div class="card-sub">${g.cantidadVentas} ventas</div></div>
+      <div class="card"><div class="card-icon brown"><i data-lucide="package"></i></div><div class="card-label">Costos productos</div><div class="card-value text-brown">${formatearMoneda(g.costos)}</div></div>
+      <div class="card"><div class="card-icon green"><i data-lucide="trending-up"></i></div><div class="card-label">Ganancia bruta</div><div class="card-value text-green">${formatearMoneda(g.gananciaBruta)}</div><div class="card-sub">${g.margenBruto}% margen</div></div>
+      <div class="card"><div class="card-icon red"><i data-lucide="wallet"></i></div><div class="card-label">Gastos operativos</div><div class="card-value text-red">${formatearMoneda(g.gastos)}</div></div>
+      <div class="card"><div class="card-icon ${margenCol}"><i data-lucide="piggy-bank"></i></div><div class="card-label">Ganancia NETA</div><div class="card-value text-${margenCol}">${formatearMoneda(g.gananciaNeta)}</div><div class="card-sub">${g.margenNeto}% margen neto</div></div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-box">
+        <h3><i data-lucide="bar-chart-3" style="width:18px;height:18px;color:var(--pink)"></i> Evolución mensual</h3>
+        <canvas id="chartGanMes"></canvas>
+      </div>
+      <div class="chart-box">
+        <h3><i data-lucide="award" style="width:18px;height:18px;color:var(--pink)"></i> Productos más rentables</h3>
+        <div id="ganTopProductos"></div>
+      </div>
+    </div>
+  `;
+  refreshIcons();
+
+  // Chart por mes
+  if(charts.ganMes) charts.ganMes.destroy();
+  const c1=document.getElementById('chartGanMes');
+  if(c1 && g.porMes && g.porMes.length){
+    charts.ganMes=new Chart(c1,{
+      type:'bar',
+      data:{
+        labels:g.porMes.map(m=>m.mes),
+        datasets:[
+          {label:'Ingresos', data:g.porMes.map(m=>m.ingresos), backgroundColor:'rgba(93,173,226,.75)'},
+          {label:'Costos', data:g.porMes.map(m=>m.costos), backgroundColor:'rgba(139,94,60,.75)'},
+          {label:'Ganancia', data:g.porMes.map(m=>m.ganancia), backgroundColor:'rgba(92,184,92,.85)'}
+        ]
+      },
+      options:{responsive:true,plugins:{legend:{position:'bottom',labels:{color:'#8b6f66',padding:14,usePointStyle:true}}},scales:{y:{beginAtZero:true,grid:{color:'rgba(240,221,214,.5)'},ticks:{color:'#b8a098'}},x:{grid:{display:false},ticks:{color:'#b8a098'}}}}
+    });
+  } else if(c1){
+    c1.parentElement.innerHTML=`<h3><i data-lucide="bar-chart-3" style="width:18px;height:18px;color:var(--pink)"></i> Evolución mensual</h3><div class="empty-state"><p>Sin datos en este período</p></div>`;
+    refreshIcons();
+  }
+
+  // Top productos rentables
+  const tp=document.getElementById('ganTopProductos');
+  if(tp){
+    if(!g.topProductos || !g.topProductos.length){
+      tp.innerHTML='<div class="empty-state"><p>Sin ventas en este período</p></div>';
+    } else {
+      const mx=Math.max(...g.topProductos.map(p=>Math.abs(p.ganancia)||1));
+      tp.innerHTML=g.topProductos.map((p,i)=>`
+        <div style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;font-size:.86rem;margin-bottom:6px">
+            <span><span style="background:var(--grad-warm);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800;margin-right:6px">#${i+1}</span>${p.nombre||'(sin nombre)'}</span>
+            <span style="font-weight:700;color:${p.ganancia>=0?'var(--green)':'var(--red)'}">${formatearMoneda(p.ganancia)}</span>
+          </div>
+          <div style="font-size:.74rem;color:var(--text-muted);margin-bottom:4px">${p.unidades} uds · ${formatearMoneda(p.ingresos)} ingresos · ${formatearMoneda(p.costos)} costos</div>
+          <div class="progress"><div class="progress-bar" style="width:${Math.abs(p.ganancia)/mx*100}%;${p.ganancia<0?'background:var(--red)':''}"></div></div>
+        </div>
+      `).join('');
+    }
+  }
+}
 
 // ═══════════════════════════════════════════════
 // INVENTARIO — con upload de imágenes
@@ -678,15 +1077,23 @@ function filtrarClientes(){
 function abrirWhatsApp(tel){let t=String(tel).replace(/\D/g,'');if(t.length===10)t='1'+t;window.open('https://wa.me/'+t,'_blank');}
 async function verCliente(id){
   const cli=(state.clientes||[]).find(c=>c.ID===id);if(!cli)return;
-  await cargarDatos('ventas','getVentas');await cargarDatos('facturas','getFacturas');await cargarDatos('deudas','getDeudas');
-  const vCli=(state.ventas||[]).filter(v=>v.ClienteID===id),fCli=(state.facturas||[]).filter(f=>f.ClienteID===id),dCli=(state.deudas||[]).filter(d=>d.EntidadID===id&&d.Tipo==='cliente');
+  await cargarDatos('ventas','getVentas');
+  await cargarDatos('facturas','getFacturas');
+  await cargarDatos('deudasFacturas','getDeudasFacturas');
+  const vCli=(state.ventas||[]).filter(v=>v.ClienteID===id);
+  const fCli=(state.facturas||[]).filter(f=>f.ClienteID===id);
+  const dFacCli=(state.deudasFacturas||[]).filter(d=>String(d.ClienteID)===String(id));
+  const totalDeuda=dFacCli.reduce((s,d)=>s+(parseFloat(d.SaldoPendiente)||0),0);
+
   const sec=document.getElementById('sec-clientes');
   sec.innerHTML=`<button class="btn btn-outline" onclick="renderClientes()" style="margin-bottom:16px"><i data-lucide="arrow-left" style="width:16px;height:16px"></i> Volver</button>
-    <div class="client-detail"><div class="client-info"><h3>${cli.Nombre}</h3><div style="margin-top:14px;font-size:.88rem;color:var(--text-secondary);line-height:2">${cli.Telefono?`<div><i data-lucide="phone" style="width:14px;height:14px;vertical-align:middle;margin-right:6px"></i>${cli.Telefono}</div>`:''}${cli.Email?`<div><i data-lucide="mail" style="width:14px;height:14px;vertical-align:middle;margin-right:6px"></i>${cli.Email}</div>`:''}${cli.Direccion?`<div><i data-lucide="map-pin" style="width:14px;height:14px;vertical-align:middle;margin-right:6px"></i>${cli.Direccion}</div>`:''}${cli.RNC?`<div>RNC: ${cli.RNC}</div>`:''}${cli.Notas?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">${cli.Notas}</div>`:''}</div><div style="margin-top:16px;display:flex;flex-direction:column;gap:8px"><button class="btn btn-outline btn-block btn-sm" onclick="abrirModalCliente('${id}')"><i data-lucide="edit-3" style="width:14px;height:14px"></i> Editar</button>${cli.Telefono?`<button class="btn btn-warm btn-block btn-sm" onclick="abrirWhatsApp('${cli.Telefono}')"><i data-lucide="message-circle" style="width:14px;height:14px"></i> WhatsApp</button>`:''}</div></div>
+    <div class="client-detail"><div class="client-info"><h3>${cli.Nombre}</h3><div style="margin-top:14px;font-size:.88rem;color:var(--text-secondary);line-height:2">${cli.Telefono?`<div><i data-lucide="phone" style="width:14px;height:14px;vertical-align:middle;margin-right:6px"></i>${cli.Telefono}</div>`:''}${cli.Email?`<div><i data-lucide="mail" style="width:14px;height:14px;vertical-align:middle;margin-right:6px"></i>${cli.Email}</div>`:''}${cli.Direccion?`<div><i data-lucide="map-pin" style="width:14px;height:14px;vertical-align:middle;margin-right:6px"></i>${cli.Direccion}</div>`:''}${cli.RNC?`<div>RNC: ${cli.RNC}</div>`:''}${cli.Notas?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">${cli.Notas}</div>`:''}${totalDeuda>0?`<div style="margin-top:10px;padding:10px;background:var(--red-dim);border-radius:8px"><strong style="color:var(--red)">Deuda total: ${formatearMoneda(totalDeuda)}</strong></div>`:''}</div><div style="margin-top:16px;display:flex;flex-direction:column;gap:8px"><button class="btn btn-outline btn-block btn-sm" onclick="abrirModalCliente('${id}')"><i data-lucide="edit-3" style="width:14px;height:14px"></i> Editar</button>${cli.Telefono?`<button class="btn btn-warm btn-block btn-sm" onclick="abrirWhatsApp('${cli.Telefono}')"><i data-lucide="message-circle" style="width:14px;height:14px"></i> WhatsApp</button>`:''}</div></div>
     <div class="client-history">
       <div class="table-wrap"><div class="table-header"><h3>Ventas (${vCli.length})</h3></div><div style="overflow-x:auto"><table><thead><tr><th>Fecha</th><th>Total</th><th>Método</th><th>Estado</th></tr></thead><tbody>${vCli.map(v=>`<tr><td>${formatearFecha(v.Fecha)}</td><td>${formatearMoneda(v.Total)}</td><td>${v.MetodoPago}</td><td>${badgeEstado(v.Estado)}</td></tr>`).join('')||'<tr><td colspan="4" style="color:var(--text-muted)">Sin ventas</td></tr>'}</tbody></table></div></div>
-      <div class="table-wrap"><div class="table-header"><h3>Facturas (${fCli.length})</h3></div><div style="overflow-x:auto"><table><thead><tr><th>N°</th><th>Fecha</th><th>Total</th><th>Estado</th><th></th></tr></thead><tbody>${fCli.map(f=>`<tr><td style="color:var(--pink)">${f.NumeroFactura}</td><td>${formatearFecha(f.Fecha)}</td><td>${formatearMoneda(f.Total)}</td><td>${badgeEstado(f.Estado)}</td><td><button class="btn btn-outline btn-sm" onclick="navegarA('facturas');setTimeout(()=>verFactura('${f.ID}'),300)"><i data-lucide="eye" style="width:14px;height:14px"></i></button></td></tr>`).join('')||'<tr><td colspan="5" style="color:var(--text-muted)">Sin facturas</td></tr>'}</tbody></table></div></div>
-      ${dCli.length?`<div class="table-wrap"><div class="table-header"><h3>Deudas</h3></div><div style="overflow-x:auto"><table><thead><tr><th>Original</th><th>Pagado</th><th>Pendiente</th><th>Estado</th><th></th></tr></thead><tbody>${dCli.map(d=>`<tr><td>${formatearMoneda(d.MontoOriginal)}</td><td>${formatearMoneda(d.MontoPagado)}</td><td style="color:var(--red);font-weight:700">${formatearMoneda(d.SaldoPendiente)}</td><td>${badgeEstado(d.Estado)}</td><td>${d.Estado==='Pendiente'?`<button class="btn btn-success btn-sm" onclick="abrirModalPago('${d.ID}',${d.SaldoPendiente})"><i data-lucide="banknote" style="width:14px;height:14px"></i></button>`:''}</td></tr>`).join('')}</tbody></table></div></div>`:''}
+      <div class="table-wrap"><div class="table-header"><h3>Facturas (${fCli.length})</h3></div><div style="overflow-x:auto"><table><thead><tr><th>N°</th><th>Fecha</th><th>Total</th><th>Saldo</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${fCli.map(f=>{
+        const saldo=getSaldoFactura(f.ID);
+        return `<tr><td style="color:var(--pink)">${f.NumeroFactura}</td><td>${formatearFecha(f.Fecha)}</td><td>${formatearMoneda(f.Total)}</td><td>${saldo>0?`<strong style="color:var(--red)">${formatearMoneda(saldo)}</strong>`:'<span style="color:var(--green)">✓</span>'}</td><td>${badgeEstado(f.Estado)}</td><td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="verFactura('${f.ID}')" title="Ver"><i data-lucide="eye" style="width:14px;height:14px"></i></button> ${saldo>0?`<button class="btn btn-success btn-sm" onclick="abrirModalAbono('${f.ID}')" title="Abonar"><i data-lucide="banknote" style="width:14px;height:14px"></i></button>`:''}</td></tr>`;
+      }).join('')||'<tr><td colspan="6" style="color:var(--text-muted)">Sin facturas</td></tr>'}</tbody></table></div></div>
     </div></div>`;refreshIcons();
 }
 function abrirModalCliente(id){const cli=id?(state.clientes||[]).find(c=>c.ID===id):null;mostrarModal(`<h2><i data-lucide="${cli?'edit-3':'user-plus'}" style="width:20px;height:20px;color:var(--pink)"></i> ${cli?'Editar':'Nuevo'} Cliente</h2><div class="form-row"><div class="form-group"><label>Nombre</label><input id="cliNombre" value="${cli?.Nombre||''}"></div><div class="form-group"><label>Teléfono</label><input id="cliTel" value="${cli?.Telefono||''}"></div></div><div class="form-row"><div class="form-group"><label>Email</label><input type="email" id="cliEmail" value="${cli?.Email||''}"></div><div class="form-group"><label>RNC</label><input id="cliRNC" value="${cli?.RNC||''}"></div></div><div class="form-group"><label>Dirección</label><input id="cliDir" value="${cli?.Direccion||''}"></div><div class="form-group"><label>Notas</label><textarea id="cliNotas" rows="2">${cli?.Notas||''}</textarea></div><button class="btn btn-primary btn-block" onclick="guardarClienteModal('${id||''}')">${cli?'Actualizar':'Guardar'}</button>`);}
@@ -766,11 +1173,11 @@ async function renderConfig(){
   sec.innerHTML=`
     <div class="chart-box" style="max-width:720px"><h3><i data-lucide="building-2" style="width:18px;height:18px;color:var(--pink)"></i> Datos del Negocio</h3><div class="form-group" style="margin-top:16px"><label>Nombre</label><input id="cfgNombre" value="${cfg.NombreNegocio||''}"></div><div class="form-row"><div class="form-group"><label>RNC</label><input id="cfgRNC" value="${cfg.RNC||''}"></div><div class="form-group"><label>Teléfono</label><input id="cfgTel" value="${cfg.Telefono||''}"></div></div><div class="form-row"><div class="form-group"><label>Email</label><input id="cfgEmail" value="${cfg.Email||''}"></div><div class="form-group"><label>Dirección</label><input id="cfgDir" value="${cfg.Direccion||''}"></div></div><div class="form-group"><label>URL Logo</label><input id="cfgLogo" value="${cfg.Logo||''}"></div></div>
     <div class="chart-box" style="max-width:720px;margin-top:16px"><h3><i data-lucide="file-text" style="width:18px;height:18px;color:var(--pink)"></i> Facturas</h3><div class="form-row" style="margin-top:16px"><div class="form-group"><label>Prefijo</label><input id="cfgPrefix" value="${cfg.PrefixFactura||'FAC'}"></div><div class="form-group"><label>Próximo N°</label><input type="number" id="cfgUltNum" value="${parseInt(cfg.UltimoNumeroFactura||0)+1}"></div></div></div>
-    <div class="chart-box" style="max-width:720px;margin-top:16px"><h3><i data-lucide="calculator" style="width:18px;height:18px;color:var(--pink)"></i> Fiscal</h3><div class="form-row" style="margin-top:16px"><div class="form-group"><label>ITBIS %</label><input type="number" id="cfgITBIS" value="${cfg.ITBIS_Porcentaje||18}"></div><div class="form-group"><label>Moneda</label><input id="cfgMoneda" value="${cfg.MonedaSimbolo||'RD$'}"></div></div></div>
+    <div class="chart-box" style="max-width:720px;margin-top:16px"><h3><i data-lucide="coins" style="width:18px;height:18px;color:var(--pink)"></i> Moneda</h3><div class="form-row" style="margin-top:16px"><div class="form-group"><label>Símbolo</label><input id="cfgMoneda" value="${cfg.MonedaSimbolo||'RD$'}" placeholder="RD$ / $ / €"></div></div></div>
     <div style="margin-top:24px;display:flex;gap:12px;flex-wrap:wrap"><button class="btn btn-primary btn-lg" onclick="guardarConfiguracion()"><i data-lucide="save" style="width:18px;height:18px"></i> Guardar</button><button class="btn btn-warm btn-lg" onclick="inicializarDB()"><i data-lucide="database" style="width:18px;height:18px"></i> Inicializar BD</button></div>`;
   refreshIcons();
 }
-async function guardarConfiguracion(){try{mostrarBusy('Guardando configuración...');await apiPost('guardarConfig',{configs:{NombreNegocio:document.getElementById('cfgNombre').value,RNC:document.getElementById('cfgRNC').value,Telefono:document.getElementById('cfgTel').value,Email:document.getElementById('cfgEmail').value,Direccion:document.getElementById('cfgDir').value,Logo:document.getElementById('cfgLogo').value,PrefixFactura:document.getElementById('cfgPrefix').value,UltimoNumeroFactura:parseInt(document.getElementById('cfgUltNum').value)-1,ITBIS_Porcentaje:document.getElementById('cfgITBIS').value,MonedaSimbolo:document.getElementById('cfgMoneda').value}});invalidarCache('config');await cargarDatos('config','getConfig',true);const n=state.config.NombreNegocio||'Mi Negocio';document.getElementById('sidebarTitle').textContent=n;const tb=document.getElementById('topbarTitle');if(tb)tb.textContent=n;mostrarToast('Guardado');}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
+async function guardarConfiguracion(){try{mostrarBusy('Guardando configuración...');await apiPost('guardarConfig',{configs:{NombreNegocio:document.getElementById('cfgNombre').value,RNC:document.getElementById('cfgRNC').value,Telefono:document.getElementById('cfgTel').value,Email:document.getElementById('cfgEmail').value,Direccion:document.getElementById('cfgDir').value,Logo:document.getElementById('cfgLogo').value,PrefixFactura:document.getElementById('cfgPrefix').value,UltimoNumeroFactura:parseInt(document.getElementById('cfgUltNum').value)-1,MonedaSimbolo:document.getElementById('cfgMoneda').value}});invalidarCache('config');await cargarDatos('config','getConfig',true);const n=state.config.NombreNegocio||'Mi Negocio';document.getElementById('sidebarTitle').textContent=n;const tb=document.getElementById('topbarTitle');if(tb)tb.textContent=n;mostrarToast('Guardado');}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 async function inicializarDB(){if(!confirm('¿Crear/verificar hojas?'))return;try{mostrarBusy('Inicializando base de datos...');const r=await apiGet('initDB');mostrarToast(r.hojasCreadas?.length?'Creadas: '+r.hojasCreadas.join(', '):'Ya existían');}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 
 // ═══ INIT ═══
@@ -811,7 +1218,8 @@ async function precargarTodo(){
     ['ventas','getVentas'],
     ['gastos','getGastos'],
     ['facturas','getFacturas'],
-    ['deudas','getDeudas']
+    ['deudas','getDeudas'],
+    ['deudasFacturas','getDeudasFacturas']
   ];
   // Lanza todas a la vez — Google Apps Script responderá en paralelo
   await Promise.allSettled(tareas.map(([k,a])=>cargarDatos(k,a)));

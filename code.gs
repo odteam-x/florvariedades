@@ -54,6 +54,18 @@ function getSheet(nombre) {
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(nombre);
 }
 
+// Asegura que una hoja exista con sus headers. Útil para datos nuevos
+// (ej. AbonosFactura) sin requerir re-correr initDB manualmente.
+function ensureSheet(nombre, headers) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(nombre);
+  if (!sheet) {
+    sheet = ss.insertSheet(nombre);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  return sheet;
+}
+
 function getSheetData(nombre) {
   var sheet = getSheet(nombre);
   if (!sheet) return [];
@@ -118,6 +130,7 @@ function initDB() {
     'Gastos': ['ID', 'Fecha', 'Categoria', 'Descripcion', 'Monto', 'ProveedorID', 'ProveedorNombre', 'Notas'],
     'Facturas': ['ID', 'NumeroFactura', 'Fecha', 'FechaVencimiento', 'ClienteID', 'ClienteNombre', 'ClienteTelefono', 'ClienteEmail', 'Subtotal', 'Descuento', 'ITBIS', 'Total', 'Estado', 'Notas', 'VentaID'],
     'DetalleFacturas': ['ID', 'FacturaID', 'ProductoID', 'Descripcion', 'Cantidad', 'PrecioUnitario', 'Subtotal'],
+    'AbonosFactura': ['ID', 'FacturaID', 'Fecha', 'Monto', 'MetodoPago', 'Notas'],
     'Deudas': ['ID', 'Tipo', 'EntidadID', 'EntidadNombre', 'MontoOriginal', 'MontoPagado', 'SaldoPendiente', 'FechaCreacion', 'FechaVencimiento', 'Estado', 'Notas'],
     'ConfigNegocio': ['Clave', 'Valor']
   };
@@ -142,7 +155,6 @@ function initDB() {
       ['Direccion', ''],
       ['Logo', ''],
       ['MonedaSimbolo', 'RD$'],
-      ['ITBIS_Porcentaje', '18'],
       ['PrefixFactura', 'FAC'],
       ['UltimoNumeroFactura', '0']
     ];
@@ -203,6 +215,21 @@ function doGet(e) {
 
       case 'getDeudas':
         return respuesta(true, getSheetData('Deudas'));
+
+      case 'getAbonosFactura':
+        ensureSheet('AbonosFactura', ['ID', 'FacturaID', 'Fecha', 'Monto', 'MetodoPago', 'Notas']);
+        var facIdAb = e.parameter.facturaId;
+        var abonos = getSheetData('AbonosFactura');
+        if (facIdAb) abonos = abonos.filter(function(a) { return String(a.FacturaID) === String(facIdAb); });
+        return respuesta(true, abonos);
+
+      case 'getDeudasFacturas':
+        return respuesta(true, calcularDeudasFacturas());
+
+      case 'getGanancias':
+        var gi2 = e.parameter.fechaInicio;
+        var gf2 = e.parameter.fechaFin;
+        return respuesta(true, calcularGanancias(gi2, gf2));
 
       case 'getConfig':
         var configData = getSheetData('ConfigNegocio');
@@ -271,6 +298,8 @@ function doPost(e) {
         return guardarConfigFn(body);
       case 'registrarPago':
         return registrarPago(body);
+      case 'registrarAbonoFactura':
+        return registrarAbonoFactura(body);
       case 'subirImagen':
         return subirImagenFn(body);
       default:
@@ -409,18 +438,13 @@ function registrarVenta(body) {
     subtotal += (parseFloat(item.precio) || 0) * (parseInt(item.cantidad) || 0);
   });
 
-  var configData = getSheetData('ConfigNegocio');
-  var itbisPct = 18;
-  configData.forEach(function(c) { if (c.Clave === 'ITBIS_Porcentaje') itbisPct = parseFloat(c.Valor) || 18; });
-
-  var baseImponible = subtotal - descuento;
-  var itbis = body.aplicarITBIS !== false ? Math.round(baseImponible * (itbisPct / 100) * 100) / 100 : 0;
-  var total = baseImponible + itbis;
+  var itbis = 0; // ITBIS eliminado del sistema
+  var total = subtotal - descuento;
   var fecha = new Date().toISOString().split('T')[0];
 
   appendRow('Ventas', {
     ID: ventaId, Fecha: fecha, ClienteID: clienteId, ClienteNombre: clienteNombre,
-    Subtotal: subtotal, Descuento: descuento, ITBIS: itbis, Total: total,
+    Subtotal: subtotal, Descuento: descuento, ITBIS: 0, Total: total,
     MetodoPago: metodoPago, Estado: 'Completada', Notas: notas
   });
 
@@ -496,18 +520,13 @@ function crearFactura(body) {
     subtotal += (parseFloat(item.precio || item.precioUnitario) || 0) * (parseInt(item.cantidad) || 0);
   });
 
-  var configData = getSheetData('ConfigNegocio');
-  var itbisPct = 18;
-  configData.forEach(function(c) { if (c.Clave === 'ITBIS_Porcentaje') itbisPct = parseFloat(c.Valor) || 18; });
-
-  var baseImponible = subtotal - descuento;
-  var itbis = body.aplicarITBIS !== false ? Math.round(baseImponible * (itbisPct / 100) * 100) / 100 : 0;
-  var total = baseImponible + itbis;
+  var itbis = 0; // ITBIS eliminado del sistema
+  var total = subtotal - descuento;
 
   appendRow('Facturas', {
     ID: facId, NumeroFactura: numFac, Fecha: fecha, FechaVencimiento: fechaVenc,
     ClienteID: clienteId, ClienteNombre: clienteNombre, ClienteTelefono: clienteTelefono, ClienteEmail: clienteEmail,
-    Subtotal: subtotal, Descuento: descuento, ITBIS: itbis, Total: total,
+    Subtotal: subtotal, Descuento: descuento, ITBIS: 0, Total: total,
     Estado: 'Pendiente', Notas: notas, VentaID: ventaId
   });
 
@@ -582,6 +601,240 @@ function registrarPago(body) {
   }
 
   return respuesta(true, { id: id, montoPagado: pagado, saldoPendiente: saldo });
+}
+
+// ──── ABONOS POR FACTURA ────
+// Registra un abono parcial (o total) a una factura específica.
+// Actualiza el estado de la factura (Pendiente → Parcial → Pagada) y
+// refleja el abono en la Deuda general asociada al cliente si existe.
+
+function registrarAbonoFactura(body) {
+  var facId = body.facturaId || body.id;
+  var monto = parseFloat(body.monto) || 0;
+  var metodoPago = body.metodoPago || 'Efectivo';
+  var notas = body.notas || '';
+
+  if (!facId) return respuesta(false, null, 'Falta facturaId');
+  if (monto <= 0) return respuesta(false, null, 'Monto inválido');
+
+  // Asegurar que la hoja de abonos existe (backward-compat)
+  ensureSheet('AbonosFactura', ['ID', 'FacturaID', 'Fecha', 'Monto', 'MetodoPago', 'Notas']);
+
+  // 1) Verificar que la factura exista y calcular su saldo actual
+  var facRow = findRowIndex('Facturas', 'ID', facId);
+  if (facRow === -1) return respuesta(false, null, 'Factura no encontrada');
+
+  var facSheet = getSheet('Facturas');
+  var facHeaders = facSheet.getRange(1, 1, 1, facSheet.getLastColumn()).getValues()[0];
+  var totalCol = facHeaders.indexOf('Total') + 1;
+  var estadoCol = facHeaders.indexOf('Estado') + 1;
+  var ventaIdCol = facHeaders.indexOf('VentaID') + 1;
+  var cliIdCol = facHeaders.indexOf('ClienteID') + 1;
+
+  var totalFac = parseFloat(facSheet.getRange(facRow, totalCol).getValue()) || 0;
+  var ventaId = ventaIdCol > 0 ? facSheet.getRange(facRow, ventaIdCol).getValue() : '';
+  var clienteId = cliIdCol > 0 ? facSheet.getRange(facRow, cliIdCol).getValue() : '';
+
+  // Sumar abonos previos
+  var previos = getSheetData('AbonosFactura').filter(function(a) { return String(a.FacturaID) === String(facId); });
+  var pagadoPrev = 0;
+  previos.forEach(function(a) { pagadoPrev += parseFloat(a.Monto) || 0; });
+  var saldo = totalFac - pagadoPrev;
+
+  if (monto > saldo + 0.01) return respuesta(false, null, 'El monto excede el saldo pendiente (' + saldo.toFixed(2) + ')');
+
+  // 2) Guardar el abono
+  var fecha = body.fecha || new Date().toISOString().split('T')[0];
+  var abonoId = generarID();
+  appendRow('AbonosFactura', {
+    ID: abonoId, FacturaID: facId, Fecha: fecha,
+    Monto: monto, MetodoPago: metodoPago, Notas: notas
+  });
+
+  // 3) Actualizar estado de la factura
+  var nuevoPagado = pagadoPrev + monto;
+  var nuevoSaldo = totalFac - nuevoPagado;
+  var nuevoEstado = nuevoSaldo <= 0.01 ? 'Pagada' : 'Parcial';
+  facSheet.getRange(facRow, estadoCol).setValue(nuevoEstado);
+
+  // 4) Reflejar en Deuda general (si existe una deuda vinculada por ventaId)
+  if (ventaId) {
+    var deudas = getSheetData('Deudas');
+    var deudaSheet = getSheet('Deudas');
+    var deudaHeaders = deudaSheet.getRange(1, 1, 1, deudaSheet.getLastColumn()).getValues()[0];
+    var dNotasCol = deudaHeaders.indexOf('Notas') + 1;
+    var dPagadoCol = deudaHeaders.indexOf('MontoPagado') + 1;
+    var dSaldoCol = deudaHeaders.indexOf('SaldoPendiente') + 1;
+    var dEstadoCol = deudaHeaders.indexOf('Estado') + 1;
+    for (var i = 0; i < deudas.length; i++) {
+      var d = deudas[i];
+      // Buscamos la deuda por VentaID (registrada en Notas con el formato "Venta a crédito #ID")
+      if (d.Estado === 'Pendiente' && d.Notas && String(d.Notas).indexOf(String(ventaId)) !== -1) {
+        var rowIdx = i + 2; // +2: header + 1-based
+        var dp = parseFloat(deudaSheet.getRange(rowIdx, dPagadoCol).getValue()) || 0;
+        var ds = parseFloat(deudaSheet.getRange(rowIdx, dSaldoCol).getValue()) || 0;
+        dp += monto;
+        ds = Math.max(0, ds - monto);
+        deudaSheet.getRange(rowIdx, dPagadoCol).setValue(dp);
+        deudaSheet.getRange(rowIdx, dSaldoCol).setValue(ds);
+        if (ds <= 0.01) deudaSheet.getRange(rowIdx, dEstadoCol).setValue('Pagada');
+        break;
+      }
+    }
+  }
+
+  return respuesta(true, {
+    id: abonoId, facturaId: facId,
+    montoAbonado: monto,
+    totalPagado: nuevoPagado,
+    saldoPendiente: nuevoSaldo < 0 ? 0 : nuevoSaldo,
+    estado: nuevoEstado
+  });
+}
+
+// ──── DEUDAS POR FACTURA ────
+// Devuelve todas las facturas con saldo pendiente (no pagadas del todo),
+// enriquecidas con MontoPagado y SaldoPendiente calculados desde AbonosFactura.
+
+function calcularDeudasFacturas() {
+  ensureSheet('AbonosFactura', ['ID', 'FacturaID', 'Fecha', 'Monto', 'MetodoPago', 'Notas']);
+  var facturas = getSheetData('Facturas');
+  var abonos = getSheetData('AbonosFactura');
+
+  // Indexar abonos por factura
+  var abonosPorFac = {};
+  abonos.forEach(function(a) {
+    var fid = String(a.FacturaID);
+    abonosPorFac[fid] = (abonosPorFac[fid] || 0) + (parseFloat(a.Monto) || 0);
+  });
+
+  var hoyStr = new Date().toISOString().split('T')[0];
+  var result = [];
+  facturas.forEach(function(f) {
+    if (f.Estado === 'Cancelada') return;
+    var total = parseFloat(f.Total) || 0;
+    var pagado = abonosPorFac[String(f.ID)] || 0;
+    var saldo = total - pagado;
+    if (saldo <= 0.01) return; // totalmente pagada
+    var vencida = f.FechaVencimiento && String(f.FechaVencimiento).substring(0, 10) < hoyStr;
+    result.push({
+      ID: f.ID,
+      NumeroFactura: f.NumeroFactura,
+      Fecha: f.Fecha,
+      FechaVencimiento: f.FechaVencimiento,
+      ClienteID: f.ClienteID,
+      ClienteNombre: f.ClienteNombre,
+      ClienteTelefono: f.ClienteTelefono,
+      ClienteEmail: f.ClienteEmail,
+      Total: total,
+      MontoPagado: pagado,
+      SaldoPendiente: saldo,
+      Estado: f.Estado,
+      Vencida: vencida,
+      DiasVencido: vencida ? Math.floor((new Date(hoyStr) - new Date(String(f.FechaVencimiento).substring(0, 10))) / 86400000) : 0
+    });
+  });
+
+  // Ordenar: vencidas primero, luego por saldo descendente
+  result.sort(function(a, b) {
+    if (a.Vencida !== b.Vencida) return a.Vencida ? -1 : 1;
+    return b.SaldoPendiente - a.SaldoPendiente;
+  });
+
+  return result;
+}
+
+// ──── CÁLCULO DE GANANCIAS ────
+// Ganancia bruta = suma de (PrecioVenta - Costo) * Cantidad por cada item vendido
+// Ganancia neta  = ganancia bruta - gastos del período
+// Margen %       = (ganancia neta / ingresos) * 100
+
+function calcularGanancias(fechaInicio, fechaFin) {
+  var ventas = getSheetData('Ventas');
+  var detalle = getSheetData('DetalleVentas');
+  var gastos = getSheetData('Gastos');
+  var productos = getSheetData('Productos');
+
+  // Indexar costos por producto
+  var costoPorProd = {};
+  productos.forEach(function(p) { costoPorProd[p.ID] = parseFloat(p.Costo) || 0; });
+
+  // Filtrar ventas por fecha
+  function enRango(f) {
+    var s = String(f).substring(0, 10);
+    if (fechaInicio && s < fechaInicio) return false;
+    if (fechaFin && s > fechaFin) return false;
+    return true;
+  }
+
+  var ventasFiltradas = ventas.filter(function(v) { return enRango(v.Fecha); });
+  var idsValidos = {};
+  ventasFiltradas.forEach(function(v) { idsValidos[v.ID] = true; });
+
+  var ingresos = 0, costos = 0;
+  ventasFiltradas.forEach(function(v) { ingresos += parseFloat(v.Total) || 0; });
+
+  // Agrupar por producto + mes
+  var porProducto = {};
+  var porMes = {};
+  detalle.forEach(function(d) {
+    if (!idsValidos[d.VentaID]) return;
+    var cant = parseInt(d.Cantidad) || 0;
+    var precio = parseFloat(d.PrecioUnitario) || 0;
+    var costoU = costoPorProd[d.ProductoID] || 0;
+    var ingresoItem = precio * cant;
+    var costoItem = costoU * cant;
+    var gananciaItem = ingresoItem - costoItem;
+    costos += costoItem;
+
+    var pk = d.ProductoID || '__sin_id__';
+    if (!porProducto[pk]) porProducto[pk] = { id: pk, nombre: d.ProductoNombre, unidades: 0, ingresos: 0, costos: 0, ganancia: 0 };
+    porProducto[pk].unidades += cant;
+    porProducto[pk].ingresos += ingresoItem;
+    porProducto[pk].costos += costoItem;
+    porProducto[pk].ganancia += gananciaItem;
+
+    // Mes
+    var venta = ventas.find ? ventas.find(function(v) { return v.ID === d.VentaID; }) : null;
+    if (!venta) {
+      for (var i = 0; i < ventas.length; i++) { if (ventas[i].ID === d.VentaID) { venta = ventas[i]; break; } }
+    }
+    if (venta) {
+      var mes = String(venta.Fecha).substring(0, 7);
+      if (!porMes[mes]) porMes[mes] = { mes: mes, ingresos: 0, costos: 0, ganancia: 0 };
+      porMes[mes].ingresos += ingresoItem;
+      porMes[mes].costos += costoItem;
+      porMes[mes].ganancia += gananciaItem;
+    }
+  });
+
+  var gastosFiltrados = gastos.filter(function(g) { return enRango(g.Fecha); });
+  var totalGastos = 0;
+  gastosFiltrados.forEach(function(g) { totalGastos += parseFloat(g.Monto) || 0; });
+
+  var gananciaBruta = ingresos - costos;
+  var gananciaNeta = gananciaBruta - totalGastos;
+  var margenBruto = ingresos > 0 ? (gananciaBruta / ingresos) * 100 : 0;
+  var margenNeto = ingresos > 0 ? (gananciaNeta / ingresos) * 100 : 0;
+
+  var topProductos = Object.keys(porProducto).map(function(k) { return porProducto[k]; })
+    .sort(function(a, b) { return b.ganancia - a.ganancia; }).slice(0, 10);
+
+  var serieMes = Object.keys(porMes).sort().map(function(k) { return porMes[k]; });
+
+  return {
+    ingresos: ingresos,
+    costos: costos,
+    gananciaBruta: gananciaBruta,
+    gastos: totalGastos,
+    gananciaNeta: gananciaNeta,
+    margenBruto: Math.round(margenBruto * 100) / 100,
+    margenNeto: Math.round(margenNeto * 100) / 100,
+    cantidadVentas: ventasFiltradas.length,
+    topProductos: topProductos,
+    porMes: serieMes,
+    periodo: { inicio: fechaInicio || '', fin: fechaFin || '' }
+  };
 }
 
 // ──── SUBIR IMAGEN ────
@@ -751,10 +1004,26 @@ function calcularDashboard() {
   // Facturas pendientes
   var facturasPendientes = facturas.filter(function(f) { return f.Estado === 'Pendiente'; }).length;
 
-  // Deudas clientes
+  // Deudas por facturas pendientes (fuente de verdad: Facturas - AbonosFactura)
+  ensureSheet('AbonosFactura', ['ID', 'FacturaID', 'Fecha', 'Monto', 'MetodoPago', 'Notas']);
+  var abonos = getSheetData('AbonosFactura');
+  var abonosPorFac = {};
+  abonos.forEach(function(a) {
+    var fid = String(a.FacturaID);
+    abonosPorFac[fid] = (abonosPorFac[fid] || 0) + (parseFloat(a.Monto) || 0);
+  });
   var totalDeudaClientes = 0;
-  deudas.forEach(function(d) {
-    if (d.Tipo === 'cliente' && d.Estado === 'Pendiente') totalDeudaClientes += parseFloat(d.SaldoPendiente) || 0;
+  var cantFacturasVencidas = 0;
+  var hoyD = hoyStr;
+  facturas.forEach(function(f) {
+    if (f.Estado === 'Cancelada') return;
+    var total = parseFloat(f.Total) || 0;
+    var pag = abonosPorFac[String(f.ID)] || 0;
+    var saldo = total - pag;
+    if (saldo > 0.01) {
+      totalDeudaClientes += saldo;
+      if (f.FechaVencimiento && String(f.FechaVencimiento).substring(0, 10) < hoyD) cantFacturasVencidas++;
+    }
   });
 
   // Método de pago distribución
@@ -781,6 +1050,7 @@ function calcularDashboard() {
     ventasPorDia: ventasPorDia,
     ventasPorCategoria: ventasPorCategoria,
     facturasPendientes: facturasPendientes,
+    facturasVencidas: cantFacturasVencidas,
     totalDeudaClientes: totalDeudaClientes,
     metodoPagoDistribucion: metodoPagoDistribucion
   };
