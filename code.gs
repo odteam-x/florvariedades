@@ -35,7 +35,17 @@ function generarNumeroFactura() {
 
 function respuesta(success, data, error) {
   var obj = success ? { success: true, data: data } : { success: false, error: error || 'Error desconocido' };
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// Respuesta a preflight CORS (algunos navegadores lo mandan).
+// Apps Script no permite cabeceras CORS personalizadas, pero devolver 200 ayuda.
+function doOptions(e) {
+  return ContentService
+    .createTextOutput('')
+    .setMimeType(ContentService.MimeType.TEXT);
 }
 
 // ──── HELPERS DE HOJAS ────
@@ -217,8 +227,28 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    var body = JSON.parse(e.postData.contents);
+    var body = {};
+
+    // 1) form-urlencoded con payload=...  (lo que envía el frontend ahora)
+    if (e && e.parameter && e.parameter.payload) {
+      try { body = JSON.parse(e.parameter.payload); }
+      catch (parseErr) { return respuesta(false, null, 'Payload no es JSON válido: ' + parseErr.message); }
+    }
+    // 2) Body JSON crudo (text/plain o application/json)
+    else if (e && e.postData && e.postData.contents) {
+      try { body = JSON.parse(e.postData.contents); }
+      catch (parseErr) {
+        if (e.parameter) body = e.parameter;
+        else return respuesta(false, null, 'Body inválido: no es JSON válido');
+      }
+    }
+    // 3) Solo parámetros
+    else if (e && e.parameter) {
+      body = e.parameter;
+    }
+
     var action = body.action;
+    if (!action) return respuesta(false, null, 'Falta el parámetro "action"');
 
     switch (action) {
       case 'guardarProducto':

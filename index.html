@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#e87ea3">
+<meta name="theme-color" content="#2d7d4f">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Sistema de Gestión</title>
@@ -20,8 +20,17 @@
 </head>
 <body>
 
-<!-- LOADER -->
+<!-- LOADER (solo carga inicial) -->
 <div class="loader" id="loader"><div class="spinner"></div></div>
+
+<!-- TOP PROGRESS BAR (precarga silenciosa) -->
+<div class="top-progress" id="topProgress"></div>
+
+<!-- BUSY PILL (mutaciones: "Por favor espere...") -->
+<div class="busy-pill" id="busyPill">
+  <div class="mini-spinner"></div>
+  <span id="busyPillText">Por favor espere...</span>
+</div>
 
 <!-- TOAST CONTAINER -->
 <div class="toast-container" id="toastContainer"></div>
@@ -31,13 +40,33 @@
   <div class="modal" id="modalContent"></div>
 </div>
 
+<!-- MOBILE TOPBAR (solo móvil) -->
+<header class="mobile-topbar" id="mobileTopbar">
+  <button class="topbar-btn" id="btnHamburger" aria-label="Abrir menú" onclick="toggleSidebar()">
+    <i data-lucide="menu"></i>
+  </button>
+  <div class="topbar-brand">
+    <h1 id="topbarTitle">Mi Negocio</h1>
+    <small id="topbarSubtitle">Dashboard</small>
+  </div>
+  <button class="topbar-btn" aria-label="Configuración" onclick="navegarA('config')">
+    <i data-lucide="settings"></i>
+  </button>
+</header>
+
+<!-- Overlay detrás del sidebar en móvil -->
+<div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
+
 <!-- APP -->
 <div class="app">
   <!-- SIDEBAR -->
-  <nav class="sidebar">
+  <nav class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <h2 id="sidebarTitle">Mi Negocio</h2>
       <small>Sistema de Gestión</small>
+      <button class="sidebar-close" aria-label="Cerrar menú" onclick="toggleSidebar(false)">
+        <i data-lucide="x"></i>
+      </button>
     </div>
     <div class="sidebar-nav">
       <div class="nav-item active" data-section="dashboard">
@@ -88,7 +117,7 @@
   </div>
 </div>
 
-<!-- BOTTOM NAV (MOBILE) -->
+<!-- BOTTOM NAV (MOBILE) — solo 5 items esenciales -->
 <nav class="bottom-nav">
   <div class="bottom-nav-inner">
     <div class="bnav-item active" data-section="dashboard">
@@ -103,17 +132,8 @@
     <div class="bnav-item" data-section="inventario">
       <i data-lucide="package"></i>Inventario
     </div>
-    <div class="bnav-item" data-section="clientes">
-      <i data-lucide="users"></i>Clientes
-    </div>
-    <div class="bnav-item" data-section="gastos">
-      <i data-lucide="wallet"></i>Gastos
-    </div>
-    <div class="bnav-item" data-section="reportes">
-      <i data-lucide="bar-chart-3"></i>Reportes
-    </div>
-    <div class="bnav-item" data-section="config">
-      <i data-lucide="settings"></i>Config
+    <div class="bnav-item" onclick="toggleSidebar(true)">
+      <i data-lucide="menu"></i>Más
     </div>
   </div>
 </nav>

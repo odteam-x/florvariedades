@@ -5,7 +5,7 @@
 // ────────────────────────────────────────────
 // CONFIGURACIÓN: Pega aquí tu URL de Web App
 // ────────────────────────────────────────────
-const API_URL = 'https://script.google.com/macros/s/AKfycbyBpAd6_rDp7-wqGsNBN5vDxHKirMnYQj1fdExVF9ddN2eEXIFtk3T6DjgB38xkyu6u/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbzfQzZsSMVdFPUJ63Q1iWjcMHMxbhVhOWrbMoDyc1z9aCncIusx1iblrjMJqXZoaU8G/exec';
 
 // ────────────────────────────────────────────
 // CÓDIGO DE APPS SCRIPT (referencia para copiar)
@@ -42,8 +42,45 @@ const charts = {};
 // ═══════════════════════════════════════════════
 // UTILIDADES
 // ═══════════════════════════════════════════════
-function mostrarLoader(){ document.getElementById('loader').classList.add('active'); }
-function ocultarLoader(){ document.getElementById('loader').classList.remove('active'); }
+// ─── Indicadores de carga ───
+// 1. Loader full-screen: SOLO para la carga inicial del sitio
+let _loaderCount=0;
+function mostrarLoader(){
+  _loaderCount++;
+  document.getElementById('loader').classList.add('active');
+}
+function ocultarLoader(){
+  _loaderCount=Math.max(0,_loaderCount-1);
+  if(_loaderCount===0) document.getElementById('loader').classList.remove('active');
+}
+
+// 2. Busy pill: píldora sutil "Por favor espere..." (para mutaciones)
+let _busyCount=0;
+function mostrarBusy(texto){
+  _busyCount++;
+  const pill=document.getElementById('busyPill');
+  const t=document.getElementById('busyPillText');
+  if(t) t.textContent=texto||'Por favor espere...';
+  if(pill) pill.classList.add('active');
+}
+function ocultarBusy(){
+  _busyCount=Math.max(0,_busyCount-1);
+  if(_busyCount===0){
+    const pill=document.getElementById('busyPill');
+    if(pill) pill.classList.remove('active');
+  }
+}
+
+// 3. Top progress: barra delgada arriba (precarga silenciosa)
+let _progressCount=0;
+function mostrarProgreso(){
+  _progressCount++;
+  document.getElementById('topProgress')?.classList.add('active');
+}
+function ocultarProgreso(){
+  _progressCount=Math.max(0,_progressCount-1);
+  if(_progressCount===0) document.getElementById('topProgress')?.classList.remove('active');
+}
 
 function mostrarToast(mensaje, tipo='success'){
   const c=document.getElementById('toastContainer');
@@ -98,26 +135,84 @@ function refreshIcons(){ try{lucide.createIcons();}catch(e){} }
 // ═══════════════════════════════════════════════
 async function apiGet(action, params={}){
   let url=API_URL+'?action='+action;
-  for(let k in params) if(params[k]) url+='&'+k+'='+encodeURIComponent(params[k]);
-  const r=await fetch(url); const j=await r.json();
+  for(let k in params) if(params[k]!==undefined && params[k]!==null && params[k]!=='') url+='&'+k+'='+encodeURIComponent(params[k]);
+  let txt;
+  try{
+    const r=await fetch(url);
+    txt=await r.text();
+  }catch(e){
+    console.error('[apiGet] fetch error:',e);
+    throw new Error('No se pudo conectar con el servidor. Verifica tu conexión y la URL del Apps Script.');
+  }
+  let j;
+  try{ j=JSON.parse(txt); }
+  catch(e){
+    console.error('[apiGet] respuesta no-JSON:',txt.substring(0,200));
+    throw new Error('Respuesta inválida del servidor. Verifica que el Apps Script esté implementado con acceso "Cualquier usuario".');
+  }
   if(!j.success) throw new Error(j.error||'Error en la API');
   return j.data;
 }
 async function apiPost(action, data={}){
   data.action=action;
-  const r=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-  const j=await r.json();
+  let txt;
+  try{
+    // Patrón estándar Apps Script: form-urlencoded con parámetro "payload"
+    // → es "simple request", no dispara preflight CORS, soporta el redirect 302
+    const body='payload='+encodeURIComponent(JSON.stringify(data));
+    const r=await fetch(API_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:body
+    });
+    txt=await r.text();
+  }catch(e){
+    console.error('[apiPost] fetch error:',e);
+    throw new Error('No se pudo conectar con el servidor. Verifica tu conexión y la URL del Apps Script.');
+  }
+  let j;
+  try{ j=JSON.parse(txt); }
+  catch(e){
+    console.error('[apiPost] respuesta no-JSON:',txt.substring(0,200));
+    throw new Error('Respuesta inválida del servidor. ¿Implementaste el Apps Script con acceso "Cualquier usuario"?');
+  }
   if(!j.success) throw new Error(j.error||'Error en la API');
   return j.data;
 }
+// ─── Caché con TTL ───
+// Si los datos se cargaron hace menos de CACHE_TTL_MS, se usan directamente.
+// Las mutaciones (guardar/eliminar) invalidan vía state[key]=null.
+const CACHE_TTL_MS = 60*1000; // 60 segundos
+const _cacheTimes = {};
+
+function _esCacheValido(key){
+  return state[key]!=null && _cacheTimes[key] && (Date.now()-_cacheTimes[key]) < CACHE_TTL_MS;
+}
+
 async function cargarDatos(key, action, force=false){
-  if(!force && state[key]) return state[key];
-  try{ state[key]=await apiGet(action); }catch(e){ mostrarToast(e.message,'error'); state[key]=state[key]||[]; }
+  // Si hay caché válido y no se fuerza → devuelve sin loader, sin red
+  if(!force && _esCacheValido(key)) return state[key];
+  const tieneDatosPrevios = state[key]!=null;
+  // Barra de progreso sutil en vez de loader brusco
+  mostrarProgreso();
+  try{
+    state[key] = await apiGet(action);
+    _cacheTimes[key] = Date.now();
+  }catch(e){
+    if(!tieneDatosPrevios){ mostrarToast(e.message,'error'); state[key]=state[key]||[]; }
+  }finally{
+    ocultarProgreso();
+  }
   return state[key];
 }
+
+function invalidarCache(...keys){
+  keys.forEach(k=>{ state[k]=null; delete _cacheTimes[k]; });
+}
+
 function refreshData(seccion){
   const map={productos:'getProductos',clientes:'getClientes',proveedores:'getProveedores',ventas:'getVentas',gastos:'getGastos',facturas:'getFacturas',deudas:'getDeudas',config:'getConfig',dashboard:'getDashboard'};
-  if(map[seccion]){state[seccion]=null;return cargarDatos(seccion,map[seccion],true);}
+  if(map[seccion]){ invalidarCache(seccion); return cargarDatos(seccion,map[seccion],true); }
 }
 
 // ═══════════════════════════════════════════════
@@ -156,9 +251,29 @@ function navegarA(seccion){
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.getElementById('sec-'+seccion).classList.add('active');
   document.querySelectorAll('.nav-item,.bnav-item').forEach(n=>{n.classList.toggle('active',n.dataset.section===seccion);});
-  document.getElementById('headerTitle').textContent=sectionTitles[seccion]||seccion;
+  const titulo=sectionTitles[seccion]||seccion;
+  document.getElementById('headerTitle').textContent=titulo;
+  const tbs=document.getElementById('topbarSubtitle'); if(tbs) tbs.textContent=titulo;
+  toggleSidebar(false); // cerrar drawer al navegar en móvil
+  // Scroll al inicio para mejor UX
+  window.scrollTo({top:0,behavior:'smooth'});
   cargarSeccion(seccion);
 }
+
+// ── Drawer del sidebar (solo móvil) ──
+function toggleSidebar(forzar){
+  const sb=document.getElementById('sidebar');
+  const bd=document.getElementById('sidebarBackdrop');
+  if(!sb) return;
+  const abierto = forzar===undefined ? !sb.classList.contains('open') : !!forzar;
+  sb.classList.toggle('open', abierto);
+  if(bd) bd.classList.toggle('open', abierto);
+  // Bloquear scroll del body cuando el drawer está abierto
+  document.body.style.overflow = abierto ? 'hidden' : '';
+}
+
+// Cerrar sidebar con Escape
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') toggleSidebar(false); });
 
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('.nav-item,.bnav-item').forEach(n=>{
@@ -168,7 +283,8 @@ document.addEventListener('DOMContentLoaded',()=>{
 });
 
 async function cargarSeccion(seccion){
-  try{ mostrarLoader();
+  // Sin loader global aquí: cargarDatos() decide si mostrarlo (solo si NO hay caché previo)
+  try{
     switch(seccion){
       case 'dashboard': await renderDashboard(); break;
       case 'pos': await renderPOS(); break;
@@ -181,14 +297,14 @@ async function cargarSeccion(seccion){
     }
     refreshIcons();
   }catch(e){mostrarToast('Error: '+e.message,'error');}
-  finally{ocultarLoader();}
+  finally{/* loader manejado por cargarDatos */}
 }
 
 // ═══════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════
 async function renderDashboard(){
-  const d=await cargarDatos('dashboard','getDashboard',true);
+  const d=await cargarDatos('dashboard','getDashboard');
   const sec=document.getElementById('sec-dashboard');
   let alertas='';
   if(d.productosStockBajo&&d.productosStockBajo.length){
@@ -322,23 +438,47 @@ async function registrarVentaPOS(){
   if(!state.carrito.length){mostrarToast('Carrito vacío','warning');return;}
   const cSel=document.getElementById('posCliente');const cId=cSel?.value||'';
   const cNom=cId?cSel.options[cSel.selectedIndex].textContent.split(' — ')[0]:'Consumidor Final';
+  const cOpt=cId?cSel.options[cSel.selectedIndex]:null;
+  const cTel=cOpt?.dataset?.tel||'';
+  const cEmail=cOpt?.dataset?.email||'';
   const mp=document.getElementById('posMetodo')?.value||'Efectivo';
-  try{mostrarLoader();
-    const r=await apiPost('registrarVenta',{clienteId:cId,clienteNombre:cNom,metodoPago:mp,descuento:getDescuentoPOS(),notas:document.getElementById('posNotas')?.value||'',items:state.carrito.map(i=>({productoId:i.productoId,nombre:i.nombre,precio:i.precio,cantidad:i.cantidad}))});
-    state.carrito=[];state.productos=null;mostrarToast('Venta registrada');
+  const desc=getDescuentoPOS();
+  const notas=document.getElementById('posNotas')?.value||'';
+  // Guardar snapshot del carrito ANTES de limpiar — se usa para pre-llenar la factura
+  const itemsSnapshot=state.carrito.map(i=>({productoId:i.productoId,nombre:i.nombre,precio:i.precio,cantidad:i.cantidad}));
+  try{mostrarBusy('Registrando venta...');
+    const r=await apiPost('registrarVenta',{clienteId:cId,clienteNombre:cNom,metodoPago:mp,descuento:desc,notas:notas,items:itemsSnapshot});
+    state.carrito=[];state.productos=null;
+    // Invalidar caches afectados por la venta
+    invalidarCache('ventas','dashboard','productos');
+    // Guardar datos de la última venta para uso en "Generar Factura"
+    window._ultimaVenta={
+      ventaId:r.id, clienteId:cId, clienteNombre:cNom,
+      clienteTelefono:cTel, clienteEmail:cEmail,
+      items:itemsSnapshot, descuento:desc, notas:notas
+    };
+    mostrarToast('Venta registrada');
     mostrarModal(`<h2><i data-lucide="check-circle" style="width:22px;height:22px;color:var(--green)"></i> Venta Registrada</h2>
       <div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Cliente</span><span style="color:var(--text-primary);font-weight:600">${r.clienteNombre}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Método</span><span style="color:var(--text-primary);font-weight:600">${r.metodoPago}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Subtotal</span><span>${formatearMoneda(r.subtotal)}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>Descuento</span><span>-${formatearMoneda(r.descuento)}</span></div><div style="display:flex;justify-content:space-between;padding:6px 0;color:var(--text-secondary)"><span>ITBIS</span><span>${formatearMoneda(r.itbis)}</span></div><div style="display:flex;justify-content:space-between;padding:12px 0;font-size:1.4rem;font-weight:800;color:var(--green);border-top:3px solid var(--green-dim);margin-top:6px"><span>TOTAL</span><span>${formatearMoneda(r.total)}</span></div></div>
-      <div style="display:flex;flex-direction:column;gap:8px"><button class="btn btn-primary btn-block" onclick="generarFacturaDesdeVenta('${r.id}','${cId}','${cNom.replace(/'/g,"\\'")}')"><i data-lucide="file-text" style="width:18px;height:18px"></i> Generar Factura</button><button class="btn btn-outline btn-block" onclick="cerrarModal()">Solo Registrar</button></div>`);
+      <div style="display:flex;flex-direction:column;gap:8px"><button class="btn btn-primary btn-block" onclick="generarFacturaDesdeVenta()"><i data-lucide="file-text" style="width:18px;height:18px"></i> Generar Factura</button><button class="btn btn-outline btn-block" onclick="cerrarModal()">Solo Registrar</button></div>`);
     refreshIcons();
-  }catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}
+  }catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}
 }
-async function generarFacturaDesdeVenta(ventaId,clienteId,clienteNombre){cerrarModal();navegarA('facturas');setTimeout(()=>abrirModalFactura(null,{ventaId,clienteId,clienteNombre}),500);}
+
+async function generarFacturaDesdeVenta(){
+  const v=window._ultimaVenta;
+  if(!v){ mostrarToast('No hay datos de la venta','warning'); return; }
+  cerrarModal();
+  navegarA('facturas');
+  // Esperar a que la sección se renderice, luego abrir el modal con todos los datos
+  setTimeout(()=>abrirModalFactura(null,v),350);
+}
 
 // ═══════════════════════════════════════════════
 // FACTURAS
 // ═══════════════════════════════════════════════
 async function renderFacturas(){
-  await cargarDatos('facturas','getFacturas',true);
+  await cargarDatos('facturas','getFacturas');
   const sec=document.getElementById('sec-facturas');
   sec.innerHTML=`<div class="table-wrap"><div class="table-header"><h3><i data-lucide="file-text" style="width:20px;height:20px;color:var(--pink)"></i> Facturas</h3><div class="table-actions"><select id="filtroEstadoFac" onchange="filtrarFacturas()"><option>Todas</option><option>Pendiente</option><option>Pagada</option><option>Vencida</option><option>Cancelada</option></select><button class="btn btn-primary btn-sm" onclick="abrirModalFactura()"><i data-lucide="plus" style="width:16px;height:16px"></i> Nueva</button></div></div><div style="overflow-x:auto"><table><thead><tr><th>N° Factura</th><th>Fecha</th><th>Cliente</th><th>Total</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="facturasBody"></tbody></table></div></div>`;
   filtrarFacturas();refreshIcons();
@@ -354,9 +494,27 @@ async function abrirModalFactura(fId,prefill){
   await cargarDatos('productos','getProductos');await cargarDatos('clientes','getClientes');await cargarDatos('config','getConfig');
   const hoy=hoyStr(),venc=new Date(Date.now()+30*86400000).toISOString().split('T')[0];
   let cOpts='<option value="">Seleccionar...</option>';
-  (state.clientes||[]).forEach(c=>{cOpts+=`<option value="${c.ID}" data-tel="${c.Telefono}" data-email="${c.Email}" data-nombre="${c.Nombre}" ${prefill&&prefill.clienteId===c.ID?'selected':''}>${c.Nombre} — ${c.Telefono}</option>`;});
-  mostrarModal(`<h2><i data-lucide="file-plus" style="width:20px;height:20px;color:var(--pink)"></i> ${fId?'Editar':'Nueva'} Factura</h2><div class="form-row"><div class="form-group"><label>Cliente</label><select id="facCliente">${cOpts}</select></div><div class="form-group"><label>Fecha</label><input type="date" id="facFecha" value="${hoy}"></div></div><div class="form-group"><label>Vencimiento</label><input type="date" id="facVenc" value="${venc}"></div><h3 style="margin:16px 0 10px;font-size:.9rem;color:var(--brown)">Items</h3><div id="facItems"></div><button class="btn btn-outline btn-sm" onclick="facAgregarItem()" style="margin-top:8px"><i data-lucide="plus" style="width:14px;height:14px"></i> Agregar</button><div style="margin-top:16px;text-align:right" id="facTotales"></div><div class="form-group" style="margin-top:16px"><label>Notas</label><textarea id="facNotas" rows="2"></textarea></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn btn-primary" onclick="guardarFactura(false)"><i data-lucide="save" style="width:16px;height:16px"></i> Guardar</button><button class="btn btn-secondary" onclick="guardarFactura(true)"><i data-lucide="eye" style="width:16px;height:16px"></i> Guardar y Ver</button></div><input type="hidden" id="facVentaId" value="${prefill?.ventaId||''}">`,'modal-lg');
-  window._facItems=[];facAgregarItem();refreshIcons();
+  (state.clientes||[]).forEach(c=>{cOpts+=`<option value="${c.ID}" data-tel="${c.Telefono||''}" data-email="${c.Email||''}" data-nombre="${c.Nombre}" ${prefill&&prefill.clienteId===c.ID?'selected':''}>${c.Nombre} — ${c.Telefono||''}</option>`;});
+  const vieneDeVenta = !!(prefill && prefill.items && prefill.items.length);
+  const banner = vieneDeVenta
+    ? `<div style="background:var(--green-dim);border-left:3px solid var(--green);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:.88rem;color:var(--text-primary)"><i data-lucide="check-circle" style="width:16px;height:16px;vertical-align:middle;color:var(--green)"></i> Datos de la venta pre-cargados. Revisa y guarda.</div>`
+    : '';
+  mostrarModal(`<h2><i data-lucide="file-plus" style="width:20px;height:20px;color:var(--pink)"></i> ${fId?'Editar':'Nueva'} Factura</h2>${banner}<div class="form-row"><div class="form-group"><label>Cliente</label><select id="facCliente">${cOpts}</select></div><div class="form-group"><label>Fecha</label><input type="date" id="facFecha" value="${hoy}"></div></div><div class="form-group"><label>Vencimiento</label><input type="date" id="facVenc" value="${venc}"></div><h3 style="margin:16px 0 10px;font-size:.9rem;color:var(--brown)">Items</h3><div id="facItems"></div><button class="btn btn-outline btn-sm" onclick="facAgregarItem()" style="margin-top:8px"><i data-lucide="plus" style="width:14px;height:14px"></i> Agregar</button><div style="margin-top:16px;text-align:right" id="facTotales"></div><div class="form-group" style="margin-top:16px"><label>Notas</label><textarea id="facNotas" rows="2">${(prefill&&prefill.notas)||''}</textarea></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn btn-primary" onclick="guardarFactura(false)"><i data-lucide="save" style="width:16px;height:16px"></i> Guardar</button><button class="btn btn-secondary" onclick="guardarFactura(true)"><i data-lucide="eye" style="width:16px;height:16px"></i> Guardar y Ver</button></div><input type="hidden" id="facVentaId" value="${(prefill&&prefill.ventaId)||''}"><input type="hidden" id="facDescuento" value="${(prefill&&prefill.descuento)||0}">`,'modal-lg');
+
+  // Pre-cargar items: si viene de una venta, usa sus items; si no, añade uno vacío
+  if(vieneDeVenta){
+    window._facItems = prefill.items.map(it=>({
+      productoId: it.productoId||'',
+      descripcion: it.nombre||it.descripcion||'',
+      cantidad: parseInt(it.cantidad)||1,
+      precio: parseFloat(it.precio||it.precioUnitario)||0
+    }));
+    renderFacItems();
+  } else {
+    window._facItems=[];
+    facAgregarItem();
+  }
+  refreshIcons();
 }
 function facAgregarItem(){window._facItems.push({productoId:'',descripcion:'',cantidad:1,precio:0});renderFacItems();}
 function renderFacItems(){
@@ -372,9 +530,9 @@ function calcFacTotales(){const sub=window._facItems.reduce((s,i)=>s+i.precio*i.
 async function guardarFactura(preview){
   const sel=document.getElementById('facCliente'),opt=sel.options[sel.selectedIndex];const items=window._facItems.filter(i=>i.descripcion||i.productoId);
   if(!items.length){mostrarToast('Agrega al menos un item','warning');return;}
-  try{mostrarLoader();const r=await apiPost('crearFactura',{clienteId:sel.value,clienteNombre:opt?.dataset?.nombre||'',clienteTelefono:opt?.dataset?.tel||'',clienteEmail:opt?.dataset?.email||'',fecha:document.getElementById('facFecha')?.value,fechaVencimiento:document.getElementById('facVenc')?.value,notas:document.getElementById('facNotas')?.value||'',ventaId:document.getElementById('facVentaId')?.value||'',items:items.map(i=>({productoId:i.productoId,descripcion:i.descripcion,nombre:i.descripcion,cantidad:i.cantidad,precio:i.precio,precioUnitario:i.precio}))});state.facturas=null;mostrarToast('Factura '+r.numeroFactura+' creada');cerrarModal();if(preview)verFacturaData(r);else renderFacturas();}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}
+  try{mostrarBusy('Guardando factura...');const r=await apiPost('crearFactura',{clienteId:sel.value,clienteNombre:opt?.dataset?.nombre||'',clienteTelefono:opt?.dataset?.tel||'',clienteEmail:opt?.dataset?.email||'',fecha:document.getElementById('facFecha')?.value,fechaVencimiento:document.getElementById('facVenc')?.value,notas:document.getElementById('facNotas')?.value||'',ventaId:document.getElementById('facVentaId')?.value||'',descuento:parseFloat(document.getElementById('facDescuento')?.value)||0,items:items.map(i=>({productoId:i.productoId,descripcion:i.descripcion,nombre:i.descripcion,cantidad:i.cantidad,precio:i.precio,precioUnitario:i.precio}))});invalidarCache('facturas','dashboard');mostrarToast('Factura '+r.numeroFactura+' creada');cerrarModal();window._ultimaVenta=null;if(preview)verFacturaData(r);else renderFacturas();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}
 }
-async function verFactura(id){try{mostrarLoader();const facs=await cargarDatos('facturas','getFacturas');const f=facs.find(x=>x.ID===id);if(!f){mostrarToast('No encontrada','error');return;}const det=await apiGet('getDetalleFactura',{facturaId:id});await cargarDatos('config','getConfig');renderFacturaPreview(f,det);}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}}
+async function verFactura(id){try{mostrarBusy('Cargando factura...');const facs=await cargarDatos('facturas','getFacturas');const f=facs.find(x=>x.ID===id);if(!f){mostrarToast('No encontrada','error');return;}const det=await apiGet('getDetalleFactura',{facturaId:id});await cargarDatos('config','getConfig');renderFacturaPreview(f,det);}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 function verFacturaData(r){const f={NumeroFactura:r.numeroFactura,Fecha:r.fecha,FechaVencimiento:r.fechaVencimiento,ClienteNombre:r.clienteNombre,ClienteTelefono:r.clienteTelefono,ClienteEmail:r.clienteEmail,Subtotal:r.subtotal,Descuento:r.descuento||0,ITBIS:r.itbis,Total:r.total,Estado:'Pendiente',Notas:'',ID:r.id};const det=(r.items||[]).map(i=>({Descripcion:i.descripcion||i.nombre,Cantidad:i.cantidad,PrecioUnitario:i.precio||i.precioUnitario,Subtotal:(i.precio||i.precioUnitario)*i.cantidad}));renderFacturaPreview(f,det);}
 
 function renderFacturaPreview(fac,detalles){
@@ -397,13 +555,13 @@ function renderFacturaPreview(fac,detalles){
 function buildMensajeFactura(){const f=window._currentFactura,d=window._currentFacturaDetalles,cfg=state.config||{};if(!f)return'';return`Estimado/a ${f.ClienteNombre},\n\nLe adjuntamos su factura:\n\n📋 *Factura N°:* ${f.NumeroFactura}\n📅 *Fecha:* ${formatearFecha(f.Fecha)}\n⏰ *Vencimiento:* ${formatearFecha(f.FechaVencimiento)}\n\n📦 *Detalle:*\n${d.map(i=>`• ${i.Descripcion||i.descripcion} x ${i.Cantidad||i.cantidad} = ${formatearMoneda((i.PrecioUnitario||i.precioUnitario)*(i.Cantidad||i.cantidad))}`).join('\n')}\n\n💰 *Subtotal:* ${formatearMoneda(f.Subtotal)}\n💰 *ITBIS (${cfg.ITBIS_Porcentaje||18}%):* ${formatearMoneda(f.ITBIS)}\n✅ *TOTAL:* ${formatearMoneda(f.Total)}\n\n_${cfg.NombreNegocio||'Mi Negocio'} | ${cfg.Telefono||''}_`;}
 function enviarFacturaWhatsApp(){const f=window._currentFactura;if(!f)return;let t=String(f.ClienteTelefono||'').replace(/\D/g,'');if(t.length===10)t='1'+t;if(!t){mostrarToast('Sin teléfono','warning');return;}window.open('https://wa.me/'+t+'?text='+encodeURIComponent(buildMensajeFactura()),'_blank');}
 function copiarMensajeFactura(){navigator.clipboard.writeText(buildMensajeFactura()).then(()=>mostrarToast('Copiado')).catch(()=>mostrarToast('Error','error'));}
-async function marcarFacturaPagada(id){try{mostrarLoader();await apiPost('actualizarEstadoFactura',{id,estado:'Pagada'});state.facturas=null;mostrarToast('Factura pagada');renderFacturas();}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}}
+async function marcarFacturaPagada(id){try{mostrarBusy('Actualizando factura...');await apiPost('actualizarEstadoFactura',{id,estado:'Pagada'});invalidarCache('facturas','dashboard');state.facturas=null;mostrarToast('Factura pagada');renderFacturas();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 
 // ═══════════════════════════════════════════════
 // INVENTARIO — con upload de imágenes
 // ═══════════════════════════════════════════════
 async function renderInventario(){
-  await cargarDatos('productos','getProductos',true);const prods=state.productos||[];
+  await cargarDatos('productos','getProductos');const prods=state.productos||[];
   const sec=document.getElementById('sec-inventario');
   const valorInv=prods.reduce((s,p)=>(parseInt(p.Stock)||0)*(parseFloat(p.Costo)||0)+s,0);
   const stockBajo=prods.filter(p=>(parseInt(p.Stock)||0)<=(parseInt(p.StockMinimo)||0)).length;
@@ -486,25 +644,26 @@ async function guardarProductoModal(id){
   // Si es base64, intentar subir al sheet
   if(imagenURL.startsWith('data:')){
     try{
-      mostrarLoader();
+      mostrarBusy('Subiendo imagen...');
       const r=await apiPost('subirImagen',{imagen:imagenURL,nombre:'prod_'+Date.now()});
       if(r.url) imagenURL=r.url;
     }catch(e){ /* fallback: usar base64 */ }
+    finally{ ocultarBusy(); }
   }
 
-  try{mostrarLoader();await apiPost('guardarProducto',{producto:{...(id?{id}:{}),nombre:document.getElementById('prodNombre').value,categoria:catS==='__nueva'?catN:catS,precio:document.getElementById('prodPrecio').value,costo:document.getElementById('prodCosto').value,stock:document.getElementById('prodStock').value,stockMinimo:document.getElementById('prodStockMin').value,descripcion:document.getElementById('prodDesc').value,imagenURL:imagenURL,activo:true}});state.productos=null;cerrarModal();mostrarToast(id?'Actualizado':'Creado');renderInventario();}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}
+  try{mostrarBusy('Guardando producto...');await apiPost('guardarProducto',{producto:{...(id?{id}:{}),nombre:document.getElementById('prodNombre').value,categoria:catS==='__nueva'?catN:catS,precio:document.getElementById('prodPrecio').value,costo:document.getElementById('prodCosto').value,stock:document.getElementById('prodStock').value,stockMinimo:document.getElementById('prodStockMin').value,descripcion:document.getElementById('prodDesc').value,imagenURL:imagenURL,activo:true}});invalidarCache('productos','dashboard');state.productos=null;cerrarModal();mostrarToast(id?'Actualizado':'Creado');renderInventario();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}
 }
-async function eliminarProducto(id){if(!confirm('¿Eliminar?'))return;try{mostrarLoader();await apiPost('eliminarProducto',{id});state.productos=null;mostrarToast('Eliminado');renderInventario();}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}}
+async function eliminarProducto(id){if(!confirm('¿Eliminar?'))return;try{mostrarBusy('Eliminando...');await apiPost('eliminarProducto',{id});invalidarCache('productos','dashboard');state.productos=null;mostrarToast('Eliminado');renderInventario();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 function ajustarInventario(id,nombre,stock){
   mostrarModal(`<h2><i data-lucide="package-plus" style="width:20px;height:20px;color:var(--pink)"></i> Ajustar Inventario</h2><p style="color:var(--text-secondary)"><strong style="color:var(--text-primary)">${nombre}</strong> — Stock: ${stock}</p><div class="form-row" style="margin-top:14px"><div class="form-group"><label>Tipo</label><select id="ajusteTipo"><option value="entrada">+ Entrada</option><option value="salida">- Salida</option></select></div><div class="form-group"><label>Cantidad</label><input type="number" id="ajusteCant" min="1" value="1"></div></div><div class="form-group"><label>Motivo</label><select id="ajusteMotivo"><option>Compra</option><option>Devolución</option><option>Ajuste</option><option>Pérdida</option></select></div><button class="btn btn-primary btn-block" onclick="ejecutarAjuste('${id}',${stock})">Aplicar</button>`);refreshIcons();
 }
-async function ejecutarAjuste(id,s){const t=document.getElementById('ajusteTipo').value,c=parseInt(document.getElementById('ajusteCant').value)||0,n=t==='entrada'?s+c:s-c;if(n<0){mostrarToast('Stock negativo','warning');return;}try{mostrarLoader();await apiPost('guardarProducto',{producto:{id,stock:n}});state.productos=null;cerrarModal();mostrarToast('Ajustado');renderInventario();}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}}
+async function ejecutarAjuste(id,s){const t=document.getElementById('ajusteTipo').value,c=parseInt(document.getElementById('ajusteCant').value)||0,n=t==='entrada'?s+c:s-c;if(n<0){mostrarToast('Stock negativo','warning');return;}try{mostrarBusy('Ajustando inventario...');await apiPost('guardarProducto',{producto:{id,stock:n}});invalidarCache('productos','dashboard');state.productos=null;cerrarModal();mostrarToast('Ajustado');renderInventario();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 
 // ═══════════════════════════════════════════════
 // CLIENTES
 // ═══════════════════════════════════════════════
 async function renderClientes(){
-  await cargarDatos('clientes','getClientes',true);await cargarDatos('ventas','getVentas');await cargarDatos('deudas','getDeudas');
+  await cargarDatos('clientes','getClientes');await cargarDatos('ventas','getVentas');await cargarDatos('deudas','getDeudas');
   const sec=document.getElementById('sec-clientes');
   sec.innerHTML=`<div class="table-wrap"><div class="table-header"><h3><i data-lucide="users" style="width:20px;height:20px;color:var(--pink)"></i> Clientes</h3><div class="table-actions"><div style="position:relative"><i data-lucide="search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--text-muted)"></i><input type="text" class="search-input" id="cliBuscar" placeholder="Buscar..." oninput="filtrarClientes()" style="padding-left:34px"></div><button class="btn btn-primary btn-sm" onclick="abrirModalCliente()"><i data-lucide="user-plus" style="width:16px;height:16px"></i> Nuevo</button></div></div><div style="overflow-x:auto"><table><thead><tr><th>Nombre</th><th>Teléfono</th><th>Email</th><th>Compras</th><th>Deuda</th><th>Acciones</th></tr></thead><tbody id="cliBody"></tbody></table></div></div>`;
   filtrarClientes();refreshIcons();
@@ -531,15 +690,15 @@ async function verCliente(id){
     </div></div>`;refreshIcons();
 }
 function abrirModalCliente(id){const cli=id?(state.clientes||[]).find(c=>c.ID===id):null;mostrarModal(`<h2><i data-lucide="${cli?'edit-3':'user-plus'}" style="width:20px;height:20px;color:var(--pink)"></i> ${cli?'Editar':'Nuevo'} Cliente</h2><div class="form-row"><div class="form-group"><label>Nombre</label><input id="cliNombre" value="${cli?.Nombre||''}"></div><div class="form-group"><label>Teléfono</label><input id="cliTel" value="${cli?.Telefono||''}"></div></div><div class="form-row"><div class="form-group"><label>Email</label><input type="email" id="cliEmail" value="${cli?.Email||''}"></div><div class="form-group"><label>RNC</label><input id="cliRNC" value="${cli?.RNC||''}"></div></div><div class="form-group"><label>Dirección</label><input id="cliDir" value="${cli?.Direccion||''}"></div><div class="form-group"><label>Notas</label><textarea id="cliNotas" rows="2">${cli?.Notas||''}</textarea></div><button class="btn btn-primary btn-block" onclick="guardarClienteModal('${id||''}')">${cli?'Actualizar':'Guardar'}</button>`);}
-async function guardarClienteModal(id){try{mostrarLoader();await apiPost('guardarCliente',{cliente:{...(id?{id}:{}),nombre:document.getElementById('cliNombre').value,telefono:document.getElementById('cliTel').value,email:document.getElementById('cliEmail').value,rnc:document.getElementById('cliRNC').value,direccion:document.getElementById('cliDir').value,notas:document.getElementById('cliNotas').value}});state.clientes=null;cerrarModal();mostrarToast(id?'Actualizado':'Creado');renderClientes();}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}}
+async function guardarClienteModal(id){try{mostrarBusy('Guardando cliente...');await apiPost('guardarCliente',{cliente:{...(id?{id}:{}),nombre:document.getElementById('cliNombre').value,telefono:document.getElementById('cliTel').value,email:document.getElementById('cliEmail').value,rnc:document.getElementById('cliRNC').value,direccion:document.getElementById('cliDir').value,notas:document.getElementById('cliNotas').value}});invalidarCache('clientes');state.clientes=null;cerrarModal();mostrarToast(id?'Actualizado':'Creado');renderClientes();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 function abrirModalPago(did,saldo){mostrarModal(`<h2><i data-lucide="banknote" style="width:20px;height:20px;color:var(--green)"></i> Registrar Pago</h2><p style="color:var(--text-secondary)">Saldo: <strong style="color:var(--red)">${formatearMoneda(saldo)}</strong></p><div class="form-group" style="margin-top:14px"><label>Monto</label><input type="number" id="pagoMonto" value="${saldo}" max="${saldo}" step="0.01"></div><button class="btn btn-primary btn-block" onclick="ejecutarPago('${did}')">Registrar</button>`);refreshIcons();}
-async function ejecutarPago(id){const m=parseFloat(document.getElementById('pagoMonto').value)||0;if(m<=0){mostrarToast('Monto inválido','warning');return;}try{mostrarLoader();await apiPost('registrarPago',{id,monto:m});state.deudas=null;cerrarModal();mostrarToast('Pago registrado');renderClientes();}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}}
+async function ejecutarPago(id){const m=parseFloat(document.getElementById('pagoMonto').value)||0;if(m<=0){mostrarToast('Monto inválido','warning');return;}try{mostrarBusy('Registrando pago...');await apiPost('registrarPago',{id,monto:m});invalidarCache('deudas','dashboard');state.deudas=null;cerrarModal();mostrarToast('Pago registrado');renderClientes();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 
 // ═══════════════════════════════════════════════
 // GASTOS
 // ═══════════════════════════════════════════════
 async function renderGastos(){
-  await cargarDatos('gastos','getGastos',true);await cargarDatos('proveedores','getProveedores');
+  await cargarDatos('gastos','getGastos');await cargarDatos('proveedores','getProveedores');
   const sec=document.getElementById('sec-gastos');const gastos=state.gastos||[];const hoy=hoyStr();const now=new Date();
   const gHoy=gastos.filter(g=>String(g.Fecha).substring(0,10)===hoy).reduce((s,g)=>s+(parseFloat(g.Monto)||0),0);
   const gMes=gastos.filter(g=>{const d=new Date(g.Fecha);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).reduce((s,g)=>s+(parseFloat(g.Monto)||0),0);
@@ -553,13 +712,13 @@ async function renderGastos(){
 }
 function filtrarGastos(){const cat=document.getElementById('gastosCatFiltro')?.value||'';let g=state.gastos||[];if(cat)g=g.filter(x=>x.Categoria===cat);g.sort((a,b)=>b.Fecha>a.Fecha?1:-1);const tb=document.getElementById('gastosBody');if(!tb)return;tb.innerHTML=g.map(x=>`<tr><td>${formatearFecha(x.Fecha)}</td><td><span class="badge badge-pink">${x.Categoria}</span></td><td>${x.Descripcion}</td><td><strong style="color:var(--red)">${formatearMoneda(x.Monto)}</strong></td><td style="color:var(--text-muted)">${x.ProveedorNombre||'—'}</td></tr>`).join('')||'<tr><td colspan="5"><div class="empty-state"><p>No hay gastos</p></div></td></tr>';}
 function abrirModalGasto(){const pOpts=(state.proveedores||[]).map(p=>`<option value="${p.ID}" data-nombre="${p.Nombre}">${p.Nombre}</option>`).join('');mostrarModal(`<h2><i data-lucide="wallet" style="width:20px;height:20px;color:var(--pink)"></i> Registrar Gasto</h2><div class="form-row"><div class="form-group"><label>Fecha</label><input type="date" id="gastoFecha" value="${hoyStr()}"></div><div class="form-group"><label>Categoría</label><select id="gastoCat"><option>Inventario</option><option>Operación</option><option>Servicios</option><option>Empleados</option><option>Alquiler</option><option>Otro</option></select></div></div><div class="form-group"><label>Descripción</label><input id="gastoDesc"></div><div class="form-row"><div class="form-group"><label>Monto</label><input type="number" id="gastoMonto" step="0.01"></div><div class="form-group"><label>Proveedor</label><select id="gastoProv"><option value="">Sin proveedor</option>${pOpts}</select></div></div><div class="form-group"><label>Notas</label><textarea id="gastoNotas" rows="2"></textarea></div><button class="btn btn-primary btn-block" onclick="guardarGasto()">Guardar</button>`);}
-async function guardarGasto(){const pSel=document.getElementById('gastoProv');try{mostrarLoader();await apiPost('registrarGasto',{fecha:document.getElementById('gastoFecha').value,categoria:document.getElementById('gastoCat').value,descripcion:document.getElementById('gastoDesc').value,monto:document.getElementById('gastoMonto').value,proveedorId:pSel.value,proveedorNombre:pSel.value?pSel.options[pSel.selectedIndex].dataset.nombre:'',notas:document.getElementById('gastoNotas').value});state.gastos=null;cerrarModal();mostrarToast('Gasto registrado');renderGastos();}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}}
+async function guardarGasto(){const pSel=document.getElementById('gastoProv');try{mostrarBusy('Guardando gasto...');await apiPost('registrarGasto',{fecha:document.getElementById('gastoFecha').value,categoria:document.getElementById('gastoCat').value,descripcion:document.getElementById('gastoDesc').value,monto:document.getElementById('gastoMonto').value,proveedorId:pSel.value,proveedorNombre:pSel.value?pSel.options[pSel.selectedIndex].dataset.nombre:'',notas:document.getElementById('gastoNotas').value});invalidarCache('gastos','dashboard');state.gastos=null;cerrarModal();mostrarToast('Gasto registrado');renderGastos();}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 
 // ═══════════════════════════════════════════════
 // REPORTES
 // ═══════════════════════════════════════════════
 async function renderReportes(){
-  await cargarDatos('ventas','getVentas',true);await cargarDatos('gastos','getGastos',true);await cargarDatos('productos','getProductos');await cargarDatos('clientes','getClientes');await cargarDatos('deudas','getDeudas');
+  await cargarDatos('ventas','getVentas');await cargarDatos('gastos','getGastos');await cargarDatos('productos','getProductos');await cargarDatos('clientes','getClientes');await cargarDatos('deudas','getDeudas');
   const sec=document.getElementById('sec-reportes');
   sec.innerHTML=`<div class="filter-bar"><strong>Período:</strong><button class="btn btn-sm tab" onclick="setReportePeriodo('hoy',this)">Hoy</button><button class="btn btn-sm tab" onclick="setReportePeriodo('semana',this)">Semana</button><button class="btn btn-sm tab active" onclick="setReportePeriodo('mes',this)">Mes</button><button class="btn btn-sm tab" onclick="setReportePeriodo('anio',this)">Año</button><input type="date" id="repFechaInicio" onchange="setReportePeriodo('custom')"><input type="date" id="repFechaFin" onchange="setReportePeriodo('custom')"></div><div class="tabs"><div class="tab active" onclick="showReporteTab('ventas',this)">Ventas</div><div class="tab" onclick="showReporteTab('productos',this)">Productos</div><div class="tab" onclick="showReporteTab('financiero',this)">Financiero</div><div class="tab" onclick="showReporteTab('clientesRep',this)">Clientes</div></div><div id="reporteContent"></div>`;
   window._reportePeriodo={inicio:hoyStr(),fin:hoyStr()};setReportePeriodo('mes');refreshIcons();
@@ -602,7 +761,7 @@ function renderRepClientes(div,ventas){
 // CONFIGURACIÓN
 // ═══════════════════════════════════════════════
 async function renderConfig(){
-  await cargarDatos('config','getConfig',true);const cfg=state.config||{};
+  await cargarDatos('config','getConfig');const cfg=state.config||{};
   const sec=document.getElementById('sec-config');
   sec.innerHTML=`
     <div class="chart-box" style="max-width:720px"><h3><i data-lucide="building-2" style="width:18px;height:18px;color:var(--pink)"></i> Datos del Negocio</h3><div class="form-group" style="margin-top:16px"><label>Nombre</label><input id="cfgNombre" value="${cfg.NombreNegocio||''}"></div><div class="form-row"><div class="form-group"><label>RNC</label><input id="cfgRNC" value="${cfg.RNC||''}"></div><div class="form-group"><label>Teléfono</label><input id="cfgTel" value="${cfg.Telefono||''}"></div></div><div class="form-row"><div class="form-group"><label>Email</label><input id="cfgEmail" value="${cfg.Email||''}"></div><div class="form-group"><label>Dirección</label><input id="cfgDir" value="${cfg.Direccion||''}"></div></div><div class="form-group"><label>URL Logo</label><input id="cfgLogo" value="${cfg.Logo||''}"></div></div>
@@ -611,13 +770,49 @@ async function renderConfig(){
     <div style="margin-top:24px;display:flex;gap:12px;flex-wrap:wrap"><button class="btn btn-primary btn-lg" onclick="guardarConfiguracion()"><i data-lucide="save" style="width:18px;height:18px"></i> Guardar</button><button class="btn btn-warm btn-lg" onclick="inicializarDB()"><i data-lucide="database" style="width:18px;height:18px"></i> Inicializar BD</button></div>`;
   refreshIcons();
 }
-async function guardarConfiguracion(){try{mostrarLoader();await apiPost('guardarConfig',{configs:{NombreNegocio:document.getElementById('cfgNombre').value,RNC:document.getElementById('cfgRNC').value,Telefono:document.getElementById('cfgTel').value,Email:document.getElementById('cfgEmail').value,Direccion:document.getElementById('cfgDir').value,Logo:document.getElementById('cfgLogo').value,PrefixFactura:document.getElementById('cfgPrefix').value,UltimoNumeroFactura:parseInt(document.getElementById('cfgUltNum').value)-1,ITBIS_Porcentaje:document.getElementById('cfgITBIS').value,MonedaSimbolo:document.getElementById('cfgMoneda').value}});state.config=null;await cargarDatos('config','getConfig',true);document.getElementById('sidebarTitle').textContent=state.config.NombreNegocio||'Mi Negocio';mostrarToast('Guardado');}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}}
-async function inicializarDB(){if(!confirm('¿Crear/verificar hojas?'))return;try{mostrarLoader();const r=await apiGet('initDB');mostrarToast(r.hojasCreadas?.length?'Creadas: '+r.hojasCreadas.join(', '):'Ya existían');}catch(e){mostrarToast(e.message,'error');}finally{ocultarLoader();}}
+async function guardarConfiguracion(){try{mostrarBusy('Guardando configuración...');await apiPost('guardarConfig',{configs:{NombreNegocio:document.getElementById('cfgNombre').value,RNC:document.getElementById('cfgRNC').value,Telefono:document.getElementById('cfgTel').value,Email:document.getElementById('cfgEmail').value,Direccion:document.getElementById('cfgDir').value,Logo:document.getElementById('cfgLogo').value,PrefixFactura:document.getElementById('cfgPrefix').value,UltimoNumeroFactura:parseInt(document.getElementById('cfgUltNum').value)-1,ITBIS_Porcentaje:document.getElementById('cfgITBIS').value,MonedaSimbolo:document.getElementById('cfgMoneda').value}});invalidarCache('config');await cargarDatos('config','getConfig',true);const n=state.config.NombreNegocio||'Mi Negocio';document.getElementById('sidebarTitle').textContent=n;const tb=document.getElementById('topbarTitle');if(tb)tb.textContent=n;mostrarToast('Guardado');}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
+async function inicializarDB(){if(!confirm('¿Crear/verificar hojas?'))return;try{mostrarBusy('Inicializando base de datos...');const r=await apiGet('initDB');mostrarToast(r.hojasCreadas?.length?'Creadas: '+r.hojasCreadas.join(', '):'Ya existían');}catch(e){mostrarToast(e.message,'error');}finally{ocultarBusy();}}
 
 // ═══ INIT ═══
 async function init(){
   refreshIcons();
-  try{mostrarLoader();await cargarDatos('config','getConfig');if(state.config?.NombreNegocio){document.getElementById('sidebarTitle').textContent=state.config.NombreNegocio;document.title=state.config.NombreNegocio+' — Gestión';}await renderDashboard();}
-  catch(e){document.getElementById('sec-dashboard').innerHTML=`<div class="alert-box warning"><h4><i data-lucide="wifi-off" style="width:18px;height:18px;vertical-align:middle"></i> No se pudo conectar</h4><p style="margin-top:8px;color:var(--text-secondary)">Configura <code style="background:var(--bg-surface-2);padding:2px 8px;border-radius:4px">API_URL</code> en app.js con tu URL de Web App.</p><p style="margin-top:6px;color:var(--text-muted)">Ve a <strong style="color:var(--pink);cursor:pointer" onclick="navegarA('config')">Configuración</strong> para inicializar la base de datos.</p></div>`;refreshIcons();}
-  finally{ocultarLoader();}
+  try{
+    mostrarLoader();
+    // FASE 1 (bloqueante): config + dashboard — lo mínimo para mostrar el sitio
+    await Promise.all([
+      cargarDatos('config','getConfig'),
+      cargarDatos('dashboard','getDashboard')
+    ]);
+    if(state.config?.NombreNegocio){
+      const n=state.config.NombreNegocio;
+      document.getElementById('sidebarTitle').textContent=n;
+      const tb=document.getElementById('topbarTitle'); if(tb) tb.textContent=n;
+      document.title=n+' — Gestión';
+    }
+    await renderDashboard();
+    ocultarLoader();
+    // FASE 2 (no bloqueante, en paralelo): precarga TODO el resto
+    // para que cambiar de sección sea instantáneo.
+    precargarTodo();
+  }catch(e){
+    document.getElementById('sec-dashboard').innerHTML=`<div class="alert-box warning"><h4><i data-lucide="wifi-off" style="width:18px;height:18px;vertical-align:middle"></i> No se pudo conectar</h4><p style="margin-top:8px;color:var(--text-secondary)">Configura <code style="background:var(--bg-surface-2);padding:2px 8px;border-radius:4px">API_URL</code> en app.js con tu URL de Web App.</p><p style="margin-top:6px;color:var(--text-muted)">Ve a <strong style="color:var(--pink);cursor:pointer" onclick="navegarA('config')">Configuración</strong> para inicializar la base de datos.</p></div>`;
+    refreshIcons();
+    ocultarLoader();
+  }
+}
+
+// Precarga TODAS las secciones en paralelo tras mostrar el dashboard.
+// Usa la barra de progreso sutil arriba. No bloquea la UI.
+async function precargarTodo(){
+  const tareas = [
+    ['productos','getProductos'],
+    ['clientes','getClientes'],
+    ['proveedores','getProveedores'],
+    ['ventas','getVentas'],
+    ['gastos','getGastos'],
+    ['facturas','getFacturas'],
+    ['deudas','getDeudas']
+  ];
+  // Lanza todas a la vez — Google Apps Script responderá en paralelo
+  await Promise.allSettled(tareas.map(([k,a])=>cargarDatos(k,a)));
 }
